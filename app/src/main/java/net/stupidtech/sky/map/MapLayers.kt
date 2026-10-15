@@ -11,6 +11,7 @@ import net.stupidtech.sky.data.Metar
 import net.stupidtech.sky.data.RouteInfo
 import net.stupidtech.sky.data.LatLon
 import net.stupidtech.sky.data.Logos
+import net.stupidtech.sky.data.airlineIata
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.eq
 import org.maplibre.android.style.expressions.Expression.get
@@ -255,7 +256,7 @@ class MapLayers(private val style: Style) {
                 val r = a.callsign?.let { routes[it] }
                 val routeText = if (r?.hasRoute == true) "\n${r.origin!!.code}→${r.destination!!.code}" else ""
                 addStringProperty("label", a.label + routeText)
-                val iata = r?.airlineIata
+                val iata = a.callsign?.let { airlineIata(it, routes) }
                 if (showLogos && iata != null && ensureLogo(iata)) addStringProperty("logo", "logo-$iata")
                 addStringProperty("icon", if (a.category == "A7") ICON_HELI else ICON_PLANE)
                 addNumberProperty("track", a.track ?: a.trueHeading ?: 0.0)
@@ -284,23 +285,24 @@ class MapLayers(private val style: Style) {
      */
     private fun addAirportLayers() {
         val rank = Expression.toNumber(get("rank"))
+        style.addImage(ICON_PIN, pinBitmap(Color.parseColor("#3949AB")))
+        style.addImage(ICON_PIN_MIL, pinBitmap(Color.parseColor("#558B2F")))
         style.addLayer(
-            CircleLayer(LAYER_APT, SRC_APT).withProperties(
-                circleRadius(
+            // Pins don't take part in collision, like the circles they replaced, so they never hide aircraft labels.
+            SymbolLayer(LAYER_APT, SRC_APT).withProperties(
+                iconImage(
+                    Expression.switchCase(eq(get("mil"), literal(true)), literal(ICON_PIN_MIL), literal(ICON_PIN)),
+                ),
+                iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                iconSize(
                     Expression.interpolate(
                         Expression.linear(), Expression.zoom(),
-                        Expression.stop(4, Expression.product(rank, literal(1.6f))),
-                        Expression.stop(11, Expression.sum(literal(3f), Expression.product(rank, literal(2.2f)))),
+                        Expression.stop(4, Expression.product(rank, literal(0.2f))),
+                        Expression.stop(11, Expression.sum(literal(0.45f), Expression.product(rank, literal(0.2f)))),
                     ),
                 ),
-                circleColor(
-                    Expression.switchCase(
-                        eq(get("mil"), literal(true)), Expression.color(Color.parseColor("#558B2F")),
-                        Expression.color(Color.parseColor("#3949AB")),
-                    ),
-                ),
-                circleStrokeColor("#FFFFFF"),
-                circleStrokeWidth(1.5f),
+                iconAllowOverlap(true),
+                iconIgnorePlacement(true),
             ).withFilter(
                 // Show by importance as you zoom in.
                 Expression.any(
@@ -320,7 +322,7 @@ class MapLayers(private val style: Style) {
                 ),
                 textFont(FONT),
                 textSize(11f),
-                textOffset(arrayOf(0f, 0.9f)),
+                textOffset(arrayOf(0f, 0.3f)),
                 textAnchor(Property.TEXT_ANCHOR_TOP),
                 textColor("#E8EAF6"),
                 textHaloColor("#CC1A237E"),
@@ -453,6 +455,8 @@ class MapLayers(private val style: Style) {
         private const val LAYER_AIRCRAFT_SHADOW = "sw-aircraft-shadow"
         private const val ICON_PLANE = "sw-plane"
         private const val ICON_HELI = "sw-heli"
+        private const val ICON_PIN = "sw-pin"
+        private const val ICON_PIN_MIL = "sw-pin-mil"
         private val FONT = arrayOf("Noto Sans Regular")
 
         private const val SDF_RADIUS = 8
@@ -502,31 +506,76 @@ class MapLayers(private val style: Style) {
 
         /** White, nose-up airliner silhouette (converted to an SDF so it can be tinted). */
         private fun planeBitmap(): Bitmap {
-            val s = 64f
-            val bmp = Bitmap.createBitmap(s.toInt(), s.toInt(), Bitmap.Config.ARGB_8888)
-            val p = Path().apply {
-                moveTo(32f, 2f)          // nose
-                cubicTo(35f, 4f, 36f, 10f, 36f, 18f)
-                lineTo(36f, 24f)
-                lineTo(62f, 38f)         // right wing
-                lineTo(62f, 43f)
-                lineTo(36f, 36f)
-                lineTo(35f, 50f)
-                lineTo(44f, 57f)         // right tailplane
-                lineTo(44f, 61f)
-                lineTo(32f, 58f)
-                lineTo(20f, 61f)
-                lineTo(20f, 57f)         // left tailplane
-                lineTo(29f, 50f)
-                lineTo(28f, 36f)
-                lineTo(2f, 43f)
-                lineTo(2f, 38f)          // left wing
-                lineTo(28f, 24f)
-                lineTo(28f, 18f)
-                cubicTo(28f, 10f, 29f, 4f, 32f, 2f)
+            val bmp = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+            Canvas(bmp).drawPath(planePath(), Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+            return bmp
+        }
+
+        /** Nose-up airliner outline on a 64×64 canvas. */
+        private fun planePath(): Path = Path().apply {
+            moveTo(32f, 2f)          // nose
+            cubicTo(35f, 4f, 36f, 10f, 36f, 18f)
+            lineTo(36f, 24f)
+            lineTo(62f, 38f)         // right wing
+            lineTo(62f, 43f)
+            lineTo(36f, 36f)
+            lineTo(35f, 50f)
+            lineTo(44f, 57f)         // right tailplane
+            lineTo(44f, 61f)
+            lineTo(32f, 58f)
+            lineTo(20f, 61f)
+            lineTo(20f, 57f)         // left tailplane
+            lineTo(29f, 50f)
+            lineTo(28f, 36f)
+            lineTo(2f, 43f)
+            lineTo(2f, 38f)          // left wing
+            lineTo(28f, 24f)
+            lineTo(28f, 18f)
+            cubicTo(28f, 10f, 29f, 4f, 32f, 2f)
+            close()
+        }
+
+        /**
+         * Map-pin airport marker: coloured teardrop with a white outline, a white plane inside and a
+         * soft shadow. Full colour (not an SDF) since there are only two variants.
+         */
+        private fun pinBitmap(fill: Int): Bitmap {
+            val w = 56f
+            val h = 72f
+            val bmp = Bitmap.createBitmap(w.toInt(), h.toInt(), Bitmap.Config.ARGB_8888)
+            val c = Canvas(bmp)
+            val cx = w / 2
+            val cy = 24f
+            val r = 20f
+            val tip = h - 4f
+            // Tangent points where the straight sides meet the round head.
+            val d = tip - cy
+            val a = kotlin.math.acos(r / d)
+            val tx = r * sin(a)
+            val ty = r * cos(a)
+            val pin = Path().apply {
+                moveTo(cx, tip)
+                lineTo(cx - tx, cy + ty)
+                arcTo(cx - r, cy - r, cx + r, cy + r, 90f + Math.toDegrees(a.toDouble()).toFloat(), 360f - 2 * Math.toDegrees(a.toDouble()).toFloat(), false)
                 close()
             }
-            Canvas(bmp).drawPath(p, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
+            c.drawPath(pin, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = fill
+                setShadowLayer(3f, 0f, 1.5f, Color.argb(110, 0, 0, 0))
+            })
+            c.drawPath(pin, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.STROKE
+                strokeWidth = 3f
+                strokeJoin = Paint.Join.ROUND
+                color = Color.WHITE
+            })
+            val plane = planePath().apply {
+                transform(android.graphics.Matrix().apply {
+                    setScale(0.42f, 0.42f)
+                    postTranslate(cx - 32f * 0.42f, cy - 32f * 0.42f)
+                })
+            }
+            c.drawPath(plane, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE })
             return bmp
         }
 

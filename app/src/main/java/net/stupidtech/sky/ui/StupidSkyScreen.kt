@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -22,7 +24,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Flight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -32,15 +33,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.FilledIconToggleButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,7 +47,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -110,16 +107,10 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalIconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings") }
+                MapButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings") }
                 Spacer(Modifier.weight(1f))
-                FilledIconToggleButton(checked = showSearch, onCheckedChange = { showSearch = it }) {
+                MapButton(onClick = { showSearch = !showSearch }, active = showSearch) {
                     Icon(Icons.Default.Search, "Search")
-                }
-                FilledIconToggleButton(checked = state.showRadar, onCheckedChange = { vm.toggleRadar() }) {
-                    Icon(Icons.Default.Cloud, "Weather radar")
-                }
-                FilledIconToggleButton(checked = state.showMetars, onCheckedChange = { vm.toggleMetars() }) {
-                    Icon(Icons.Default.Thermostat, "METARs")
                 }
             }
             AnimatedVisibility(visible = showSearch) {
@@ -148,26 +139,26 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
             }
         }
 
-        Column(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
-        ) {
+        val panelOpen = state.selected != null || state.selectedAirport != null || state.selectedMetar != null
+        // Panels pad their own content for the navigation bar so their background reaches the screen edge.
+        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
+                Modifier.fillMaxWidth()
+                    .then(if (panelOpen) Modifier else Modifier.navigationBarsPadding())
+                    .padding(horizontal = 12.dp).padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
+                // Only the pill is weighted (fill = false) so the button group sits flush with the right edge.
                 StatusPill(state, onClick = { showList = true }, modifier = Modifier.weight(1f, fill = false))
-                Spacer(Modifier.weight(1f))
-                SmallFloatingActionButton(
-                    onClick = vm::refreshArea,
-                    containerColor = if (state.areaStale) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = if (state.areaStale) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onPrimaryContainer,
-                ) { Icon(Icons.Default.Refresh, if (state.areaStale) "Refresh this area" else "Refresh now") }
-                Spacer(Modifier.width(8.dp))
-                SmallFloatingActionButton(onClick = {
-                    if (state.locationGranted) vm.locateUser() else requestLocation()
-                }) { Icon(Icons.Default.MyLocation, "My location") }
+                Row(Modifier.padding(start = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MapButton(onClick = vm::refreshArea, active = state.areaStale) {
+                        Icon(Icons.Default.Refresh, if (state.areaStale) "Refresh this area" else "Refresh now")
+                    }
+                    MapButton(onClick = {
+                        if (state.locationGranted) vm.locateUser() else requestLocation()
+                    }) { Icon(Icons.Default.MyLocation, "My location") }
+                }
             }
             val sel = state.selected
             val metar = state.selectedMetar
@@ -176,6 +167,7 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
                     ac = sel,
                     enrichment = state.enrichment,
                     routeInfo = sel.callsign?.let { state.routes[it] },
+                    legStart = state.legStart,
                     collapsed = detailCollapsed,
                     onCollapsedChange = { c ->
                         detailCollapsed = c
@@ -206,7 +198,7 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
     }
 
     if (showSettings) {
-        ModalBottomSheet(onDismissRequest = { showSettings = false }) {
+        ModalBottomSheet(onDismissRequest = { showSettings = false }, containerColor = MaterialTheme.colorScheme.surface) {
             SettingsContent(
                 showLogos = state.showLogos,
                 onShowLogos = vm::setLogosEnabled,
@@ -224,7 +216,7 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
     }
 
     if (showList) {
-        ModalBottomSheet(onDismissRequest = { showList = false }) {
+        ModalBottomSheet(onDismissRequest = { showList = false }, containerColor = MaterialTheme.colorScheme.surface) {
             AircraftList(
                 aircraft = state.aircraft,
                 routes = state.routes,
@@ -289,23 +281,45 @@ private fun SearchBar(onClose: () -> Unit, onSearch: (String, (Boolean) -> Unit)
 private fun StatusPill(state: UiState, onClick: () -> Unit, modifier: Modifier) {
     val inView = state.viewport?.let { v -> state.aircraft.count { it.inside(v) } } ?: state.aircraft.size
     // Tap to open the aircraft list.
-    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color(0xCC000000)) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Aircraft list", tint = Color.White, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Default.Flight, contentDescription = "Aircraft in view", tint = Color.White, modifier = Modifier.size(16.dp))
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(MAP_BUTTON_SIZE),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 3.dp,
+    ) {
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Aircraft list", modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Icon(Icons.Default.Flight, contentDescription = "Aircraft in view", modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
-            Text("$inView", color = Color.White, style = MaterialTheme.typography.labelLarge)
+            Text("$inView", style = MaterialTheme.typography.labelLarge)
             if (state.loading) {
                 Spacer(Modifier.width(8.dp))
-                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = Color.White)
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
             }
             if (state.error != null) {
                 Spacer(Modifier.width(8.dp))
-                Text("⚠ ${shortError(state.error)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelMedium)
+                Text("⚠ ${shortError(state.error)}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
             }
         }
     }
+}
+
+private val MAP_BUTTON_SIZE = 48.dp
+
+/** Every control floating over the map shares this look: a circle on the surface colour, primary when active. */
+@Composable
+private fun MapButton(onClick: () -> Unit, active: Boolean = false, content: @Composable () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(MAP_BUTTON_SIZE),
+        shape = CircleShape,
+        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        contentColor = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+        shadowElevation = 3.dp,
+    ) { Box(contentAlignment = Alignment.Center) { content() } }
 }
 
 private fun shortError(e: String): String = when {
@@ -383,7 +397,7 @@ private fun SettingsContent(
         Text(
             "Positions: adsb.lol (ODbL) / adsb.fi open data / The OpenSky Network (opensky-network.org) · Routes & aircraft: adsbdb.com · " +
                 "Photos: Planespotters.net · Airline logos: pics.avs.io · Weather: NOAA aviationweather.gov, RainViewer · " +
-                "Map: OpenFreeMap, © OpenStreetMap contributors",
+                "Airports: OurAirports · Airline codes: OpenFlights (ODbL) · Map: OpenFreeMap, © OpenStreetMap contributors",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -11,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -29,12 +31,8 @@ import net.stupidtech.sky.data.Aircraft
 import net.stupidtech.sky.data.AirportInfo
 import net.stupidtech.sky.data.Metar
 import net.stupidtech.sky.data.RouteInfo
-import kotlin.math.asin
-import kotlin.math.cos
-import kotlin.math.pow
+import net.stupidtech.sky.data.distanceKm
 import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Airport details plus a live mini-board built from what the app already knows:
@@ -62,8 +60,8 @@ fun AirportPanel(
         )
     }
 
-    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp), colors = panelColors(), elevation = panelElevation()) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(airport.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -169,11 +167,4 @@ private fun Section(
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
     }
-}
-
-private fun distanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLon = Math.toRadians(lon2 - lon1)
-    val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
-    return 2 * 6371.0 * asin(sqrt(a))
 }

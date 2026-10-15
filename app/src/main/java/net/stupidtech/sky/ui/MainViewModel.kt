@@ -11,7 +11,9 @@ import net.stupidtech.sky.data.OpenSky
 import net.stupidtech.sky.data.Enrichment
 import net.stupidtech.sky.data.FlightData
 import net.stupidtech.sky.data.LatLon
+import net.stupidtech.sky.data.Airlines
 import net.stupidtech.sky.data.Logos
+import net.stupidtech.sky.data.airlineIata
 import net.stupidtech.sky.data.Trace
 import net.stupidtech.sky.data.Metar
 import net.stupidtech.sky.data.RateLimitedException
@@ -23,6 +25,7 @@ import net.stupidtech.sky.data.WatchEntry
 import net.stupidtech.sky.data.WatchKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +56,8 @@ data class UiState(
     val selected: Aircraft? = null,
     val enrichment: Enrichment? = null,
     val selectedTrail: List<LatLon> = emptyList(),
+    /** First point of the selected aircraft's traced leg, used to sanity-check its callsign route. */
+    val legStart: LatLon? = null,
     val showRadar: Boolean = false,
     val radarTiles: String? = null,
     val showMetars: Boolean = false,
@@ -121,6 +126,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var openSkyJob: Job? = null
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            Airlines.load(app.assets.open("airlines.tsv").bufferedReader().use { it.readText() })
+        }
         viewModelScope.launch {
             logosEnabled.collect { on ->
                 _state.update { it.copy(showLogos = on) }
@@ -235,6 +243,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         resolveRoutes()
+        loadLogos()
     }
 
     private var routeJob: Job? = null
@@ -281,7 +290,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val centre = s.viewport ?: loadedArea
                 val next = s.aircraft
                     .sortedBy { a -> centre?.let { c -> (a.lat!! - c.lat).let { it * it } + (a.lon!! - c.lon).let { it * it } } ?: 0.0 }
-                    .mapNotNull { a -> a.callsign?.let { s.routes[it]?.airlineIata } }
+                    .mapNotNull { a -> a.callsign?.let { airlineIata(it, s.routes) } }
                     .distinct()
                     .firstOrNull { !Logos.isKnown(it) }
                     ?: break
@@ -476,7 +485,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (hex == null) {
             traceJob?.cancel()
             selectedHistory = emptyList()
-            _state.update { it.copy(selected = null, enrichment = null, selectedTrail = emptyList()) }
+            _state.update { it.copy(selected = null, enrichment = null, selectedTrail = emptyList(), legStart = null) }
             return
         }
         val ac = _state.value.aircraft.firstOrNull { it.hex == hex } ?: return
@@ -518,13 +527,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (_state.value.selected?.hex != ac.hex) {
             traceJob?.cancel()
             selectedHistory = emptyList()
+            _state.update { it.copy(legStart = null) }
             traceJob = viewModelScope.launch {
                 val path = Trace.currentFlight(ac.hex, openSkyCredentials.value)
                 if (_state.value.selected?.hex != ac.hex) return@launch
                 selectedHistory = path
                 // Live points start fresh from here so they don't duplicate the history.
                 trails[ac.hex]?.clear()
-                _state.update { it.copy(selectedTrail = fullPath(ac.hex)) }
+                _state.update { it.copy(selectedTrail = fullPath(ac.hex), legStart = path.firstOrNull()) }
             }
         }
         _state.update {

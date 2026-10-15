@@ -24,6 +24,48 @@ If a later change reverses an earlier decision, add a new entry and mark the old
 
 ## Log
 
+### 2026-10-15 — Callsign routes checked against the flown leg
+**Context:** SKW5471 showed SFO → Arcata with a dashed line north while its trail came from Spokane. The
+trail was right (GEG → SFO, new-leg flag at takeoff); adsbdb's callsign route was another leg of that callsign.
+**Decision:** `Trace.contradictsOrigin` treats the route as wrong when the traced leg starts below 5,000 ft
+(a takeoff) more than 50 km from the listed origin. The selected aircraft's panel and collapsed header then
+hide the route and say why, and `MapHost` skips the remaining-route line. `UiState.legStart` holds the first
+traced point. A leg first seen at cruise (coverage gap) is never judged.
+**Why / alternatives:** Destination can't be checked until landing, and routes are keyed by callsign only, so
+the takeoff point is the one reliable signal. Map labels and the list still show the adsbdb route, since only
+the selected aircraft has a trace.
+**Watch out:** Fixture `trace_turnaround.json` is a real capture trimmed to its last two legs.
+
+### 2026-10-15 — Logos keyed by callsign prefix, not by route lookup
+**Context:** Logos took 30+ s to fill in: each needed that flight's adsbdb route (one request per callsign at
+0.5 s, nearest first, GA callsigns in the same queue).
+**Decision:** `Airlines.kt` maps the callsign's ICAO prefix (three letters then a digit) to an IATA code from a
+bundled table, `assets/airlines.tsv`, generated from OpenFlights `airlines.dat` by `tools/build_airlines.py`.
+`airlineIata()` prefers the resolved route's airline and falls back to the table. Logo loading also starts on
+every position refresh, not only after route batches.
+**Why / alternatives:** adsbdb `/v0/airline/{icao}` per prefix still shares the throttled adsbdb queue.
+OpenFlights airline data is ODbL (credited in the README and Settings) and dated, so the route answer wins.
+**Watch out:** Where several airlines share an ICAO code, active ones win, then the lowest OpenFlights id.
+
+### 2026-10-15 — Map controls unified; weather toggles removed
+**Context:** The owner found the floating controls inconsistent (tonal circles, filled toggles, square FABs,
+a black status pill), the bottom sheet a tinted grey, and asked for the radar and METAR toggles to go.
+**Decision:** `MapButton` (48 dp circle, surface colour, primary when active) for every map control; the status
+pill uses the same surface and height. Panels use `panelColors()` (plain `surface`, not Card's
+`surfaceContainerHighest`), and both `ModalBottomSheet`s pass `containerColor = surface`. The radar/METAR toggle buttons are gone; the airport panel still shows METAR.
+**Watch out:** The bottom row is `SpaceBetween` with only the pill weighted (`fill = false`). A second weighted
+spacer split the free space with the pill and left a gap on the right.
+Panels apply `navigationBarsPadding()` to their content, not the outer column, so the sheet reaches the
+bottom edge. The button row pads itself only when no panel is open.
+
+### 2026-10-15 — Airport markers are pins
+**Context:** The owner wanted airports to look like map pins rather than circles.
+**Decision:** `MapLayers.pinBitmap` draws a teardrop (blue civil, green military) with a white outline and plane;
+`LAYER_APT` is a SymbolLayer anchored at the bottom, sized by rank and zoom. It allows overlap and ignores
+placement, as the circles did, so pins never hide aircraft labels.
+A tap directly on a pin (point query on `LAYER_APT` in `MapHost`) opens the airport before the 24 dp aircraft
+box is checked; without that, pins at busy airports were untappable behind parked aircraft.
+
 ### 2026-10-15 — Releases are published by GitHub Actions, not by agents
 **Context:** Agent sessions can push branches but are refused when creating repositories, tags, releases or
 changing repo settings (description, topics).

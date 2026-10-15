@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +38,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import net.stupidtech.sky.data.Trace
+import net.stupidtech.sky.data.LatLon
 import net.stupidtech.sky.data.Aircraft
 import net.stupidtech.sky.data.Enrichment
 import net.stupidtech.sky.data.Metar
@@ -46,6 +50,7 @@ fun AircraftPanel(
     ac: Aircraft,
     enrichment: Enrichment?,
     routeInfo: RouteInfo?,
+    legStart: LatLon?,
     collapsed: Boolean,
     onCollapsedChange: (Boolean) -> Unit,
     onClose: () -> Unit,
@@ -54,17 +59,19 @@ fun AircraftPanel(
 ) {
     val uri = LocalUriHandler.current
     // The background resolver usually has the route before the detail lookup finishes.
-    val route = enrichment?.route ?: routeInfo?.route
+    val listedRoute = enrichment?.route ?: routeInfo?.route
+    val routeContradicted = Trace.contradictsOrigin(legStart, listedRoute?.origin)
+    val route = listedRoute?.takeUnless { routeContradicted }
     val info = enrichment?.info
     val photo = enrichment?.photo
     val airline = route?.airline?.name ?: routeInfo?.airlineName ?: info?.owner
 
-    Card(modifier.animateContentSize(), shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
+    Card(modifier.animateContentSize(), shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp), colors = panelColors(), elevation = panelElevation()) {
         if (collapsed) {
             CollapsedHeader(ac, airline, route, onExpand = { onCollapsedChange(false) }, onClose = onClose)
             return@Card
         }
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(ac.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -96,6 +103,17 @@ fun AircraftPanel(
                     "Route from adsbdb by callsign; may be outdated for irregular flights.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            val listedOrigin = listedRoute?.origin
+            val listedDestination = listedRoute?.destination
+            if (routeContradicted && listedOrigin != null && listedDestination != null) {
+                Text(
+                    "adsbdb lists ${listedOrigin.code} → ${listedDestination.code} for this callsign, but this flight " +
+                        "took off elsewhere, so the route is hidden.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 12.dp),
                 )
             }
 
@@ -158,7 +176,8 @@ private fun CollapsedHeader(
     onClose: () -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onExpand).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onExpand).navigationBarsPadding()
+            .padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
@@ -193,8 +212,8 @@ private fun CollapsedHeader(
 
 @Composable
 fun MetarPanel(m: Metar, onClose: () -> Unit, modifier: Modifier = Modifier) {
-    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-        Column(Modifier.padding(16.dp)) {
+    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp), colors = panelColors(), elevation = panelElevation()) {
+        Column(Modifier.padding(16.dp).navigationBarsPadding()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(m.icaoId, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -263,3 +282,10 @@ fun Badge(text: String, color: Color) {
         )
     }
 }
+
+/** Panels use the plain surface colour (not Card's tinted container) to match the map buttons. */
+@Composable
+internal fun panelColors() = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+
+@Composable
+internal fun panelElevation() = CardDefaults.cardElevation(defaultElevation = 6.dp)

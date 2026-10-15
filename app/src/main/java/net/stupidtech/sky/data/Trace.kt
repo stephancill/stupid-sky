@@ -11,7 +11,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** A point on a flight path. [alt] in feet, null when on the ground or unknown. */
 data class LatLon(val lat: Double, val lon: Double, val alt: Int?)
@@ -24,6 +29,24 @@ data class LatLon(val lat: Double, val lon: Double, val alt: Int?)
 object Trace {
     /** Gap that separates two flights when the feed didn't mark a new leg. */
     private const val LEG_GAP_SEC = 30 * 60
+
+    /** A leg starting below this (ft) began at a takeoff, not at the edge of receiver coverage. */
+    private const val TAKEOFF_ALT_FT = 5000
+
+    /** Takeoff further than this from the listed origin means the callsign's route is another flight's. */
+    private const val ORIGIN_TOLERANCE_KM = 50.0
+
+    /**
+     * True when the flown leg visibly took off away from [origin]. adsbdb routes are keyed by callsign, so
+     * the same callsign's other legs (e.g. the return flight) show up as this flight's route.
+     */
+    fun contradictsOrigin(legStart: LatLon?, origin: Airport?): Boolean {
+        val start = legStart ?: return false
+        val lat = origin?.latitude ?: return false
+        val lon = origin.longitude ?: return false
+        if ((start.alt ?: 0) > TAKEOFF_ALT_FT) return false
+        return distanceKm(start.lat, start.lon, lat, lon) > ORIGIN_TOLERANCE_KM
+    }
 
     suspend fun currentFlight(hex: String, openSkyCreds: OpenSkyCredentials?): List<LatLon> {
         val h = hex.lowercase()
@@ -83,4 +106,11 @@ object Trace {
 
     private fun JsonArray.sec(): Double = (getOrNull(0) as? JsonPrimitive)?.doubleOrNull
         ?: (getOrNull(0) as? JsonPrimitive)?.longOrNull?.toDouble() ?: 0.0
+}
+
+internal fun distanceKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2).pow(2) + cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) * sin(dLon / 2).pow(2)
+    return 2 * 6371.0 * asin(sqrt(a))
 }

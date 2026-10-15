@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import net.stupidtech.sky.data.Trace
 import net.stupidtech.sky.data.AirportInfo
 import net.stupidtech.sky.data.LatLon
 import net.stupidtech.sky.map.MapLayers
@@ -94,12 +95,16 @@ fun MapHost(
                     val p = m.projection.toScreenLocation(latLng)
                     val r = 24f * resources.displayMetrics.density
                     val box = RectF(p.x - r, p.y - r, p.x + r, p.y + r)
-                    val ac = m.queryRenderedFeatures(box, MapLayers.LAYER_AIRCRAFT).firstOrNull()
+                    // A tap right on a pin opens the airport even when aircraft are parked around it;
+                    // otherwise aircraft win within the forgiving box.
+                    val pinHit = m.queryRenderedFeatures(p, MapLayers.LAYER_APT).firstOrNull()
+                    val ac = if (pinHit == null) m.queryRenderedFeatures(box, MapLayers.LAYER_AIRCRAFT).firstOrNull() else null
                     val metar = if (ac == null) m.queryRenderedFeatures(box, MapLayers.LAYER_METAR).firstOrNull() else null
-                    val apt = if (ac == null && metar == null) {
+                    val apt = pinHit ?: if (ac == null && metar == null) {
                         m.queryRenderedFeatures(box, MapLayers.LAYER_APT).firstOrNull()
                     } else null
                     when {
+                        pinHit != null -> pinHit.toAirportInfo()?.let(currentOnAirportTap)
                         ac != null -> currentOnAircraftTap(ac.getStringProperty("hex"))
                         metar != null -> currentOnMetarTap(metar.getStringProperty("id"))
                         apt != null -> apt.toAirportInfo()?.let(currentOnAirportTap)
@@ -138,7 +143,8 @@ fun MapHost(
         LaunchedEffect(l, state.selectedTrail) { l.setTrail(state.selectedTrail) }
         // Remaining route for the selected aircraft (only while airborne).
         val sel = state.selected
-        val route = sel?.callsign?.let { state.routes[it]?.route } ?: state.enrichment?.route
+        val route = (sel?.callsign?.let { state.routes[it]?.route } ?: state.enrichment?.route)
+            ?.takeUnless { Trace.contradictsOrigin(state.legStart, it.origin) }
         LaunchedEffect(l, sel?.lat, sel?.lon, route) {
             val pos = sel?.takeIf { !it.onGround && it.hasPosition }?.let { LatLon(it.lat!!, it.lon!!, it.altitude) }
             if (sel == null) l.setRoute(null, null, null) else l.setRoute(pos, route?.origin, route?.destination)

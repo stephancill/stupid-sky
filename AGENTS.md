@@ -17,7 +17,7 @@ community and open data. Read this before changing code.
 
 - Live map of aircraft from community ADS-B networks, with military aircraft unfiltered.
 - Per-aircraft details: airline, route, photo, logo, flown path and remaining route.
-- Airports, weather (radar + METAR), aircraft list, watchlist alerts.
+- Airports (with METAR), aircraft list, watchlist alerts.
 - **No paid APIs, no API keys, no Google Play services.** Keep it that way.
 - Package / applicationId: `net.stupidtech.sky`. App name: "stupid sky" (lowercase).
 
@@ -50,6 +50,7 @@ app/src/main/java/net/stupidtech/sky/
     Routes.kt       callsign → route/airline (adsbdb), cached, resolved one at a time
     Trace.kt        flown path: adsb.lol trace files (cut to current leg), OpenSky /tracks fallback
     Logos.kt        airline logo cards from pics.avs.io (runtime only, never bundled)
+    Airlines.kt     callsign ICAO prefix → IATA code (bundled OpenFlights table) for logos
     Models.kt       @Serializable API models, Aircraft, AirportInfo, Enrichment
     Settings.kt     DataStore prefs (watchlist, OpenSky creds, toggles)
     UserLocation.kt platform LocationManager (no GMS)
@@ -58,9 +59,10 @@ app/src/main/java/net/stupidtech/sky/
   ui/          Compose UI + MainViewModel (single ViewModel holds all screen state in UiState)
   alerts/AlertWorker.kt  WorkManager job (15 min) for watchlist notifications
 app/src/main/assets/airports.geojson   generated (see tools/)
+app/src/main/assets/airlines.tsv       generated (see tools/)
 app/src/main/res/drawable/ic_launcher_*.xml, ic_stat_logo.xml   generated (see tools/)
 app/src/test/   unit tests; fixtures in app/src/test/resources are real captured API responses
-tools/          generators: build_airports.py, build_icon.py; loop-icon.svg is the icon source of truth
+tools/          generators: build_airports.py, build_airlines.py, build_icon.py; loop-icon.svg is the icon source of truth
 docs/implementation-notes.md   design decisions and their reasons (read first, keep updated)
 ```
 
@@ -101,6 +103,7 @@ All requests go through `FlightData.fetch`/`fetchBytes`, which apply the per-hos
 | METAR | `aviationweather.gov/api/data/metar` | bbox queries rejected when huge |
 | Radar | RainViewer `weather-maps.json` tiles | free tiles max zoom 7 |
 | Airports | OurAirports (public domain), bundled | regenerate with `tools/build_airports.py` |
+| Airline codes | OpenFlights `airlines.dat` (ODbL), bundled | regenerate with `tools/build_airlines.py`; data is old, so a resolved route's airline wins |
 | Base map | OpenFreeMap `liberty` style | fonts: "Noto Sans Regular/Bold/Italic" only |
 
 Known dead ends (don't retry): airplanes.live now requires emailing them; adsb.lol `/api/0/routeset` bulk
@@ -129,6 +132,8 @@ User-Agent is `StupidSky/<version> (+<CONTACT>)`; `CONTACT` is a `buildConfigFie
 - `app/src/main/assets/airports.geojson` ← `python3 tools/build_airports.py airports.csv app/src/main/assets/airports.geojson`
   (download `airports.csv` from https://davidmegginson.github.io/ourairports-data/airports.csv). Military
   detection is name-based (e.g. Langebaanweg AFB is missed).
+- `app/src/main/assets/airlines.tsv` ← `python3 tools/build_airlines.py airlines.dat app/src/main/assets/airlines.tsv`
+  (download `airlines.dat` from https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat).
 - `ic_launcher_foreground.xml`, `ic_launcher_monochrome.xml`, `ic_stat_logo.xml`, `tools/icon-preview.svg`
   ← `python3 tools/build_icon.py` from `tools/loop-icon.svg`. VectorDrawables can't do dash arrays or masks,
   so the script computes the solid half, dots and centre dot as geometry. Icon: black mark on white.

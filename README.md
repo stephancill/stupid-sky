@@ -7,8 +7,9 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Airline and origin → destination** for every flight with a known callsign, shown in the list, the detail panel
   and on map labels. Looked up in the background (nearest aircraft first) and cached.
 - **Airline logos** above aircraft on the map (zoom 8+), fetched at runtime from pics.avs.io by IATA airline
-  code and cached for the session. Can be turned off in Settings.
-- **Airports on the map** from bundled OurAirports data (~11,600 airports): large from zoom 4, medium from 7,
+  code and cached for the session. The airline comes from the callsign prefix via a bundled OpenFlights table,
+  so logos don't wait for route lookups. Can be turned off in Settings.
+- **Airports on the map** as pins from bundled OurAirports data (~11,600 airports): large from zoom 4, medium from 7,
   small coded airfields from 9; military fields in green. Tap one for its METAR and a live mini-board of
   arriving / departed flights and aircraft on the ground, built from tracked aircraft and their routes.
 - **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
@@ -22,7 +23,6 @@ An open-source Android flight tracker built only on free, public data. Military 
   fallback), coloured by altitude and extended live, plus a dashed great-circle line to the destination with
   origin/destination markers when the route is known.
 - **Search** by callsign, registration or ICAO hex, anywhere in the world.
-- **Weather**: RainViewer radar overlay, plus METAR stations coloured by flight category (VFR/MVFR/IFR/LIFR). Tap a station for the raw METAR.
 - **Watchlist alerts**: get a notification when a registration, callsign, hex or military callsign prefix
   (e.g. `RCH`, `FORTE`) is airborne. Checked every 15 minutes in the background.
 - **Aircraft list** of everything in view, sortable by distance, altitude, callsign or speed, and filterable by
@@ -42,6 +42,7 @@ An open-source Android flight tracker built only on free, public data. Military 
 | Photos | [Planespotters.net](https://www.planespotters.net/photo/api) | attribution + descriptive User-Agent required |
 | Airline logos | pics.avs.io (Aviasales image CDN, fetched at runtime) | undocumented; logos are the airlines' trademarks |
 | Airports | [OurAirports](https://ourairports.com/data/) (bundled, `tools/build_airports.py`) | public domain |
+| Airline codes (ICAO → IATA) | [OpenFlights](https://openflights.org/data.php) (bundled, `tools/build_airlines.py`) | ODbL |
 | METAR | [aviationweather.gov](https://aviationweather.gov/data/api/) | US gov, free |
 | Radar | [RainViewer](https://www.rainviewer.com/api.html) | free tier, zoom ≤ 7 |
 | Base map | [OpenFreeMap](https://openfreemap.org) + OpenStreetMap | free |

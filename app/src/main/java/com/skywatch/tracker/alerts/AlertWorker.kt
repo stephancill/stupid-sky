@@ -70,7 +70,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
             ctx, id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val n = NotificationCompat.Builder(ctx, CHANNEL)
-            .setSmallIcon(R.drawable.ic_plane)
+            .setSmallIcon(R.drawable.ic_stat_logo)
             .setContentTitle(title)
             .setContentText(text)
             .setContentIntent(pi)

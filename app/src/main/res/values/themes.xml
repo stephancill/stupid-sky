@@ -1,4 +1,3 @@
 <resources>
-    <style name="Theme.SkyWatch" parent="android:Theme.Material.NoActionBar" />
-    <color name="ic_launcher_background">#0D1B2A</color>
+    <style name="Theme.StupidSky" parent="android:Theme.Material.NoActionBar" />
 </resources>

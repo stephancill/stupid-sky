@@ -74,7 +74,7 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-/** Owns every SkyWatch source/layer on top of the base map style. */
+/** Owns every stupid sky source/layer on top of the base map style. */
 class MapLayers(private val style: Style) {
 
     private val aircraftSource = GeoJsonSource(SRC_AIRCRAFT)

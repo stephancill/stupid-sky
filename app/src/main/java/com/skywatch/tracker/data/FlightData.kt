@@ -53,7 +53,7 @@ class RateLimitedException(val host: String, val retryAfterSec: Long?) :
     IOException("Rate limited by $host")
 
 object FlightData {
-    private val userAgent = "SkyWatch/${BuildConfig.VERSION_NAME} (+${BuildConfig.CONTACT})"
+    private val userAgent = "StupidSky/${BuildConfig.VERSION_NAME} (+${BuildConfig.CONTACT})"
 
     val http: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)

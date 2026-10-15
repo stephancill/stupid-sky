@@ -1,4 +1,4 @@
-# SkyWatch
+# stupid sky
 
 An open-source Android flight tracker built only on free, public data. Military aircraft are not filtered out.
 

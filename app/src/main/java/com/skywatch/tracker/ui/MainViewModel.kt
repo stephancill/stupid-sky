@@ -11,6 +11,8 @@ import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.RateLimitedException
+import com.skywatch.tracker.data.RouteInfo
+import com.skywatch.tracker.data.Routes
 import com.skywatch.tracker.data.Settings
 import com.skywatch.tracker.data.UserLocation
 import com.skywatch.tracker.data.WatchEntry
@@ -27,8 +29,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-enum class Mode { ALL, MILITARY }
-
 data class Viewport(
     val lat: Double, val lon: Double, val radiusNm: Int,
     val south: Double, val west: Double, val north: Double, val east: Double,
@@ -40,7 +40,6 @@ data class LatLon(val lat: Double, val lon: Double, val alt: Int?)
 data class CameraMove(val lat: Double, val lon: Double, val zoom: Double?, val id: Int)
 
 data class UiState(
-    val mode: Mode = Mode.ALL,
     val aircraft: List<Aircraft> = emptyList(),
     val selected: Aircraft? = null,
     val enrichment: Enrichment? = null,
@@ -65,6 +64,8 @@ data class UiState(
     val areaStale: Boolean = false,
     /** Networks that failed on the last refresh (the others still supplied data). */
     val failedSources: List<String> = emptyList(),
+    /** Airline and origin/destination by callsign, filled in progressively in the background. */
+    val routes: Map<String, RouteInfo> = emptyMap(),
 )
 
 @OptIn(FlowPreview::class)
@@ -149,8 +150,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun pollOpenSky() {
         val v = loadedArea ?: return
-        // The global military view doesn't need gap-filling at one airport.
-        if (_state.value.mode != Mode.ALL) return
         val box = BoundingBox(v.south, v.west, v.north, v.east)
         try {
             val r = OpenSky.states(box, openSkyCredentials.value)
@@ -186,7 +185,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis()
         val mainHex = lastMain.mapTo(HashSet()) { it.hex }
         val sinceFetch = (now - openSkyFetchedAt) / 1000.0
-        val extra = if (_state.value.mode == Mode.ALL) {
+        val extra = run {
             openSkyList.filter { a ->
                 if (a.hex in mainHex) return@filter false
                 val age = (a.seenPos ?: a.seen ?: 0.0) + sinceFetch
@@ -194,7 +193,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // airborne ones go stale quickly.
                 if (a.onGround) age < 15 * 60 else age < 60
             }
-        } else emptyList()
+        }
 
         val merged = lastMain + extra
         recordTrails(merged)
@@ -209,6 +208,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 selectedTrail = newSel?.let { a -> trails[a.hex]?.toList() }.orEmpty(),
                 openSkyAdded = extra.size,
             )
+        }
+        resolveRoutes()
+    }
+
+    private var routeJob: Job? = null
+
+    /**
+     * Fetch routes for callsigns we haven't looked up yet, nearest to the map centre first.
+     * Runs one request at a time (Routes goes through the per-host throttle) and pushes results
+     * to the UI in small batches.
+     */
+    private fun resolveRoutes() {
+        if (routeJob?.isActive == true) return
+        routeJob = viewModelScope.launch {
+            while (true) {
+                val s = _state.value
+                val centre = s.viewport ?: loadedArea
+                val pending = s.aircraft
+                    .filter { it.callsign != null && it.callsign !in s.routes }
+                    .sortedBy { a ->
+                        // Selected aircraft first, then by distance from the centre.
+                        if (a.hex == s.selected?.hex) -1.0
+                        else centre?.let { c -> (a.lat!! - c.lat).let { it * it } + (a.lon!! - c.lon).let { it * it } } ?: 0.0
+                    }
+                    .mapNotNull { it.callsign }
+                    .distinct()
+                    .take(5)
+                if (pending.isEmpty()) break
+                val found = pending.mapNotNull { cs -> Routes.resolve(cs)?.let { cs to it } }.toMap()
+                // Nothing resolved (offline / rate limited): stop and try again after the next refresh.
+                if (found.isEmpty()) break
+                _state.update { it.copy(routes = it.routes + found) }
+            }
         }
     }
 
@@ -231,15 +263,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun poll() {
         val v = loadedArea ?: return
-        val mode = _state.value.mode
         lastPollAt = System.currentTimeMillis()
         pollCount++
         _state.update { it.copy(loading = true) }
         try {
-            val result = when (mode) {
-                Mode.ALL -> FlightData.area(v.lat, v.lon, v.radiusNm)
-                Mode.MILITARY -> FlightData.military()
-            }
+            val result = FlightData.area(v.lat, v.lon, v.radiusNm)
             var list = result.aircraft.filter { it.hasPosition }
 
             // Keep tracking the selected aircraft after it leaves the queried area,
@@ -357,14 +385,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- controls ----
-
-    fun setMode(m: Mode) {
-        if (m == _state.value.mode) return
-        lastMain = emptyList()
-        _state.update { it.copy(mode = m, aircraft = emptyList(), openSkyAdded = 0) }
-        trails.clear()
-        restartPolling(immediate = true)
-    }
 
     fun setHideGround(h: Boolean) {
         _state.update { it.copy(hideGround = h) }

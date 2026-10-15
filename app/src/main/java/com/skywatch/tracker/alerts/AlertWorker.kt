@@ -21,6 +21,7 @@ import com.skywatch.tracker.R
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Settings
 import com.skywatch.tracker.ui.MainActivity
+import com.skywatch.tracker.ui.Units
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
@@ -44,7 +45,7 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
                 val id = "${entry.encode()}|${ac.hex}"
                 if (now - settings.lastAlerted(id) < REALERT_MS) continue
                 settings.markAlerted(id, now)
-                val alt = ac.altitude?.let { "%,d ft".format(it) } ?: "airborne"
+                val alt = ac.altitude?.let(Units::altitude) ?: "airborne"
                 notify(
                     id.hashCode(),
                     "${ac.label} is flying",

@@ -95,6 +95,9 @@ data class FlightRoute(
 )
 
 @Serializable
+data class AdsbdbAirlineResponse(val response: List<Airline>? = null)
+
+@Serializable
 data class Airline(val name: String? = null, val icao: String? = null, val iata: String? = null, val country: String? = null)
 
 @Serializable

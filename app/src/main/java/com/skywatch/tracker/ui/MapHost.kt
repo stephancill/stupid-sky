@@ -123,7 +123,9 @@ fun MapHost(
 
     val l = layers
     if (l != null) {
-        LaunchedEffect(l, state.aircraft, state.selected?.hex) { l.setAircraft(state.aircraft, state.selected?.hex) }
+        LaunchedEffect(l, state.aircraft, state.selected?.hex, state.routes) {
+            l.setAircraft(state.aircraft, state.selected?.hex, state.routes)
+        }
         LaunchedEffect(l, state.selectedTrail) { l.setTrail(state.selectedTrail) }
         LaunchedEffect(l, state.metars, state.showMetars) { l.setMetars(if (state.showMetars) state.metars else emptyList()) }
         LaunchedEffect(l, state.showRadar, state.radarTiles) { l.setRadar(if (state.showRadar) state.radarTiles else null) }

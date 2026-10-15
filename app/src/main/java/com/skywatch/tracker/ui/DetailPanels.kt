@@ -35,18 +35,20 @@ import coil.compose.AsyncImage
 import com.skywatch.tracker.data.Aircraft
 import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.Metar
-import kotlin.math.abs
+import com.skywatch.tracker.data.RouteInfo
 
 @Composable
 fun AircraftPanel(
     ac: Aircraft,
     enrichment: Enrichment?,
+    routeInfo: RouteInfo?,
     onClose: () -> Unit,
     onWatch: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val uri = LocalUriHandler.current
-    val route = enrichment?.route
+    // The background resolver usually has the route before the detail lookup finishes.
+    val route = enrichment?.route ?: routeInfo?.route
     val info = enrichment?.info
     val photo = enrichment?.photo
 
@@ -55,7 +57,7 @@ fun AircraftPanel(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(ac.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    val airline = route?.airline?.name ?: info?.owner
+                    val airline = route?.airline?.name ?: routeInfo?.airlineName ?: info?.owner
                     if (airline != null) Text(airline, style = MaterialTheme.typography.bodyMedium)
                 }
                 IconButton(onClick = onWatch) { Icon(Icons.Default.NotificationsActive, "Alert me") }
@@ -107,21 +109,24 @@ fun AircraftPanel(
             Spacer(Modifier.height(12.dp))
             Grid(
                 listOfNotNull(
-                    "Altitude" to (if (ac.onGround) "Ground" else ac.altitude?.let { "%,d ft".format(it) } ?: "—"),
-                    "Vertical" to (ac.verticalRate?.let { v -> (if (v > 0) "▲ " else if (v < 0) "▼ " else "") + "%,d fpm".format(abs(v)) } ?: "—"),
-                    "Speed" to (ac.gs?.let { "${it.toInt()} kt" } ?: "—"),
+                    "Altitude" to (if (ac.onGround) "Ground" else ac.altitude?.let(Units::altitude) ?: "—"),
+                    "Vertical" to (ac.verticalRate?.let(Units::verticalRate) ?: "—"),
+                    "Speed" to (ac.gs?.let(Units::speed) ?: "—"),
                     "Track" to (ac.track?.let { "${it.toInt()}°" } ?: "—"),
                     "Squawk" to (ac.squawk ?: "—"),
                     "Hex" to ac.hex.uppercase(),
+                    (route?.airline?.name ?: routeInfo?.airlineName)?.let { "Airline" to it },
+                    route?.origin?.let { "From" to airportText(it) },
+                    route?.destination?.let { "To" to airportText(it) },
                     "Registration" to (ac.registration ?: info?.registration ?: "—"),
                     "Type" to (ac.typeCode ?: info?.icaoType ?: "—"),
                     (ac.desc ?: info?.let { listOfNotNull(it.manufacturer, it.type).joinToString(" ") })?.takeIf { it.isNotBlank() }?.let { "Aircraft" to it },
                     info?.owner?.let { "Owner" to it },
                     info?.ownerCountry?.let { "Country" to it },
-                    ac.tas?.let { "TAS" to "${it.toInt()} kt" },
+                    ac.tas?.let { "True airspeed" to Units.speed(it) },
                     ac.mach?.let { "Mach" to "%.3f".format(it) },
-                    ac.selectedAltitude?.let { "Sel. alt" to "%,d ft".format(it) },
-                    ac.windSpeed?.let { "Wind" to "${ac.windDir ?: "?"}° / $it kt" },
+                    ac.selectedAltitude?.let { "Sel. alt" to Units.altitude(it) },
+                    ac.windSpeed?.let { "Wind" to "${ac.windDir ?: "?"}° / ${Units.speed(it.toDouble())}" },
                     ac.outsideAirTemp?.let { "OAT" to "$it °C" },
                     ac.rssi?.let { "Signal" to "%.1f dBFS".format(it) },
                     ac.seen?.let { "Last seen" to if (it < 90) "%.1f s".format(it) else "${(it / 60).toInt()} min" },
@@ -163,6 +168,9 @@ fun MetarPanel(m: Metar, onClose: () -> Unit, modifier: Modifier = Modifier) {
         }
     }
 }
+
+private fun airportText(a: com.skywatch.tracker.data.Airport): String =
+    listOfNotNull(a.municipality ?: a.name, "(${a.code})").joinToString(" ")
 
 @Composable
 private fun AirportCol(code: String, city: String?, modifier: Modifier, end: Boolean = false) {

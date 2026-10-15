@@ -99,15 +99,6 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
         ) {
             SearchBar(onMenu = { showSettings = true }, onSearch = vm::search)
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SingleChoiceSegmentedButtonRow {
-                    Mode.entries.forEachIndexed { i, m ->
-                        SegmentedButton(
-                            selected = state.mode == m,
-                            onClick = { vm.setMode(m) },
-                            shape = SegmentedButtonDefaults.itemShape(i, Mode.entries.size),
-                        ) { Text(if (m == Mode.ALL) "All traffic" else "Military (global)") }
-                    }
-                }
                 Spacer(Modifier.weight(1f))
                 FilledIconToggleButton(checked = showList, onCheckedChange = { showList = it }) {
                     Icon(Icons.AutoMirrored.Filled.List, "Aircraft list")
@@ -121,7 +112,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             }
             // Panning never triggers a request on its own; offer an explicit refresh instead.
             AnimatedVisibility(
-                visible = state.areaStale && state.mode == Mode.ALL,
+                visible = state.areaStale,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
                 ExtendedFloatingActionButton(
@@ -155,6 +146,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 sel != null -> AircraftPanel(
                     ac = sel,
                     enrichment = state.enrichment,
+                    routeInfo = sel.callsign?.let { state.routes[it] },
                     onClose = { vm.select(null) },
                     onWatch = {
                         watchPrefill = when {
@@ -192,6 +184,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
         ModalBottomSheet(onDismissRequest = { showList = false }) {
             AircraftList(
                 aircraft = state.aircraft,
+                routes = state.routes,
                 viewport = state.viewport,
                 onPick = { hex ->
                     showList = false

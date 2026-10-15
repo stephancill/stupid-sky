@@ -47,6 +47,8 @@ enum class Provider(val label: String, val baseUrl: String) {
     }
 }
 
+class NotFoundException(host: String) : IOException("Not found on $host")
+
 class RateLimitedException(val host: String, val retryAfterSec: Long?) :
     IOException("Rate limited by $host")
 
@@ -220,6 +222,7 @@ object FlightData {
                 val retryAfter = resp.header("Retry-After")?.toLongOrNull()
                 throw RateLimitedException(host, retryAfter)
             }
+            if (resp.code == 404) throw NotFoundException(host)
             if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} from $host")
             resp.body?.string() ?: throw IOException("Empty response from $host")
         }

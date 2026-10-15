@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.Path
 import com.skywatch.tracker.data.Aircraft
 import com.skywatch.tracker.data.Metar
+import com.skywatch.tracker.data.RouteInfo
 import com.skywatch.tracker.ui.LatLon
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.eq
@@ -160,11 +161,13 @@ class MapLayers(private val style: Style) {
         )
     }
 
-    fun setAircraft(list: List<Aircraft>, selectedHex: String?) {
+    fun setAircraft(list: List<Aircraft>, selectedHex: String?, routes: Map<String, RouteInfo>) {
         val features = list.map { a ->
             Feature.fromGeometry(Point.fromLngLat(a.lon!!, a.lat!!)).apply {
                 addStringProperty("hex", a.hex)
-                addStringProperty("label", a.label)
+                val r = a.callsign?.let { routes[it] }
+                val routeText = if (r?.hasRoute == true) "\n${r.origin!!.code}→${r.destination!!.code}" else ""
+                addStringProperty("label", a.label + routeText)
                 addStringProperty("icon", if (a.category == "A7") ICON_HELI else ICON_PLANE)
                 addNumberProperty("track", a.track ?: a.trueHeading ?: 0.0)
                 addBooleanProperty("mil", a.isMilitary)

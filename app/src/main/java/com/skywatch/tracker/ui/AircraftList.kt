@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.skywatch.tracker.data.Aircraft
+import com.skywatch.tracker.data.RouteInfo
 import kotlin.math.asin
 import kotlin.math.cos
 import kotlin.math.pow
@@ -48,12 +49,17 @@ private enum class Show(val label: String) { ALL("All"), AIRBORNE("Airborne"), G
 
 /** Aircraft currently inside the visible map, sortable and filterable. */
 @Composable
-fun AircraftList(aircraft: List<Aircraft>, viewport: Viewport?, onPick: (String) -> Unit) {
+fun AircraftList(
+    aircraft: List<Aircraft>,
+    routes: Map<String, RouteInfo>,
+    viewport: Viewport?,
+    onPick: (String) -> Unit,
+) {
     var sort by rememberSaveable { mutableStateOf(SortBy.DISTANCE) }
     var show by rememberSaveable { mutableStateOf(Show.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
 
-    val rows = remember(aircraft, viewport, sort, show, query) {
+    val rows = remember(aircraft, routes, viewport, sort, show, query) {
         val q = query.trim()
         aircraft.asSequence()
             .filter { a -> viewport == null || a.inside(viewport) }
@@ -66,8 +72,12 @@ fun AircraftList(aircraft: List<Aircraft>, viewport: Viewport?, onPick: (String)
                 }
             }
             .filter { a ->
-                q.isEmpty() || listOfNotNull(a.callsign, a.registration, a.typeCode, a.desc, a.hex)
-                    .any { it.contains(q, ignoreCase = true) }
+                val r = a.callsign?.let { routes[it] }
+                q.isEmpty() || listOfNotNull(
+                    a.callsign, a.registration, a.typeCode, a.desc, a.hex, r?.airlineName,
+                    r?.origin?.iata, r?.origin?.icao, r?.origin?.municipality,
+                    r?.destination?.iata, r?.destination?.icao, r?.destination?.municipality,
+                ).any { it.contains(q, ignoreCase = true) }
             }
             .map { a -> a to (viewport?.let { distanceNm(it.lat, it.lon, a.lat!!, a.lon!!) } ?: 0.0) }
             .let { seq ->
@@ -89,7 +99,7 @@ fun AircraftList(aircraft: List<Aircraft>, viewport: Viewport?, onPick: (String)
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("Filter by callsign, reg, type") },
+            placeholder = { Text("Callsign, airline, airport, reg, type") },
             leadingIcon = { Icon(Icons.Default.Search, null) },
             singleLine = true,
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -107,7 +117,7 @@ fun AircraftList(aircraft: List<Aircraft>, viewport: Viewport?, onPick: (String)
         }
         LazyColumn(Modifier.heightIn(max = 520.dp)) {
             items(rows, key = { it.first.hex }) { (a, dist) ->
-                AircraftRow(a, dist) { onPick(a.hex) }
+                AircraftRow(a, a.callsign?.let { routes[it] }, dist) { onPick(a.hex) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             }
         }
@@ -127,7 +137,8 @@ private fun <T> ChipRow(options: List<T>, selected: T, label: (T) -> String, onS
 }
 
 @Composable
-private fun AircraftRow(a: Aircraft, distNm: Double, onClick: () -> Unit) {
+private fun AircraftRow(a: Aircraft, route: RouteInfo?, distNm: Double, onClick: () -> Unit) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -140,27 +151,39 @@ private fun AircraftRow(a: Aircraft, distNm: Double, onClick: () -> Unit) {
                 if (a.isMilitary) Tag("MIL", Color(0xFF33691E))
                 if (a.fromOpenSky) Tag("OS", Color(0xFF0277BD))
             }
+            // Airline · type · registration
             Text(
-                listOfNotNull(a.typeCode ?: a.desc, a.registration?.takeIf { it != a.label }).joinToString(" · ")
+                listOfNotNull(route?.airlineName, a.typeCode ?: a.desc, a.registration?.takeIf { it != a.label })
+                    .joinToString(" · ")
                     .ifEmpty { a.hex.uppercase() },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = muted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // Origin → destination
+            val o = route?.origin
+            val d = route?.destination
+            if (o != null && d != null) {
+                Text(
+                    "${o.code} → ${d.code}  ${o.municipality ?: o.name ?: ""} → ${d.municipality ?: d.name ?: ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
+        Spacer(Modifier.width(8.dp))
         Column(horizontalAlignment = Alignment.End) {
             val vr = a.verticalRate ?: 0
             val arrow = when { a.onGround -> ""; vr > 300 -> " ▲"; vr < -300 -> " ▼"; else -> "" }
             Text(
-                if (a.onGround) "Ground" else a.altitude?.let { "%,d ft".format(it) + arrow } ?: "—",
+                if (a.onGround) "Ground" else a.altitude?.let { Units.altitude(it) + arrow } ?: "—",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            Text(
-                listOfNotNull(a.gs?.let { "${it.toInt()} kt" }, "%.0f nm".format(distNm)).joinToString(" · "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            a.gs?.let { Text(Units.speed(it), style = MaterialTheme.typography.bodySmall, color = muted) }
+            Text(Units.distance(distNm), style = MaterialTheme.typography.bodySmall, color = muted)
         }
     }
 }

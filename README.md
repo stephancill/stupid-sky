@@ -3,10 +3,12 @@
 An open-source Android flight tracker built only on free, public data. Military aircraft are not filtered out.
 
 ## Features
+- **Metric units**: altitude in metres, speed in km/h, climb rate in m/s, distance in km.
+- **Airline and origin → destination** for every flight with a known callsign, shown in the list, the detail panel
+  and on map labels. Looked up in the background (nearest aircraft first) and cached.
 - **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
   never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking. Aircraft are shown with heading and colour:
   amber = civil, green = military, red = emergency squawk (7500/7600/7700), grey = on ground.
-- **Military (global) mode** loads every aircraft the network flags as military, worldwide.
 - **Aircraft details**: altitude, vertical rate, speed, squawk, TAS/Mach, selected altitude, wind/OAT
   (when the aircraft sends them), MLAT / PIA / LADD flags, registration, type, owner and country.
 - **Route** (origin → destination) looked up by callsign.

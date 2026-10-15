@@ -48,6 +48,16 @@ An open-source Android flight tracker built only on free, public data. Military 
 
 Set your own contact URL in `app/build.gradle.kts` (`CONTACT`). It goes into the User-Agent, and Planespotters rejects requests without one.
 
+## Download
+Latest APK: https://github.com/stephancill/stupid-sky/releases/latest/download/stupid-sky-arm64.apk
+(or `stupid-sky-universal.apk` for any phone). All releases: https://github.com/stephancill/stupid-sky/releases
+
+## Releasing
+Push a version tag and GitHub Actions tests, builds and publishes the release:
+```
+git tag v0.1.1 && git push origin v0.1.1
+```
+
 ## Build
 Requires JDK 17+ and the Android SDK (platform 35).
 ```

@@ -24,6 +24,27 @@ If a later change reverses an earlier decision, add a new entry and mark the old
 
 ## Log
 
+### 2026-10-15 — Detail sheet with drag stops
+**Context:** The owner asked for a dynamically adjustable detail sheet with stops and interruptible animations.
+The earlier button-only panel used `animateContentSize`, which a drag can't interrupt.
+**Decision:** `DetailSheet` (aircraft, airport and METAR panels) is a fixed-height Surface positioned by a
+foundation `AnchoredDraggableState<SheetStop>` with Hidden / Peek / Half / Full anchors. Peek ends at the
+panel header (measured via a `headerModifier` the panel applies), Half is 50% of the screen, Full fits the
+content but stops below the settings/search row. Half is dropped when it's within 48 dp of Peek or Full.
+The handle drags via `anchoredDraggable`; the content drags the sheet through a `NestedScrollConnection`
+(push up expands before scrolling; pull down at the top collapses), and releases settle with `pickStop`
+(nearest stop when slow, next stop in the fling direction when fast). The chevron and close button call
+`animateTo`, so any drag or button press takes over from wherever the sheet is. Settling at Hidden dismisses;
+settling at Peek fits the camera to the flight path. The map buttons are positioned from the sheet offset in
+the layout phase (no recomposition while dragging) and fade out past the middle of the screen.
+**Why / alternatives:** Material3 `BottomSheetScaffold` has only partial/expanded and would put the whole
+screen under its scaffold; `ModalBottomSheet` blocks the map. foundation 1.8's `AnchoredDraggableState`
+gives arbitrary anchors and mutex-based interruption.
+**Watch out:** Until the content is measured the sheet takes the full screen height off-screen, so its children
+can lay out; anchors are recomputed whenever the content height changes (e.g. the photo loads).
+Verified on the emulator: open at Half, drag to Full, chevron to Peek, drag interrupting the open animation,
+fling from content to Peek, fling on the handle to dismiss.
+
 ### 2026-10-15 — Callsign routes checked against the flown leg
 **Context:** SKW5471 showed SFO → Arcata with a dashed line north while its trail came from Spokane. The
 trail was right (GEG → SFO, new-leg flag at takeoff); adsbdb's callsign route was another leg of that callsign.
@@ -107,7 +128,7 @@ same icon in black, blurred and translated in viewport space.
 (non-squared) distances gave a lumpy halo. Both were caught by porting the function to Python and rendering a
 preview with headless Chromium, which is the way to check visual changes without a device.
 
-### 2026-10-15 — Detail panel: buttons only, no drag
+### 2026-10-15 — Detail panel: buttons only, no drag (superseded by "Detail sheet with drag stops")
 **Context:** The panel collapses to a one-line bar so the flight path is visible (collapsing also fits the
 camera to the path and destination).
 **Decision:** Minimise/expand via buttons (or tapping the bar). The drag handle and swipe gestures were removed.

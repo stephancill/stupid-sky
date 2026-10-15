@@ -499,7 +499,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun fitSelectedPath() {
         val s = _state.value
         val sel = s.selected ?: return
-        val dest = sel.callsign?.let { s.routes[it]?.destination } ?: s.enrichment?.route?.destination
+        val route = sel.callsign?.let { s.routes[it]?.route } ?: s.enrichment?.route
+        // A route that contradicts the flown leg would fit the camera to the wrong destination.
+        val dest = route?.takeUnless { Trace.contradictsOrigin(s.legStart, it.origin) }?.destination
         val pts = s.selectedTrail.map { it.lat to it.lon } +
             listOfNotNull(sel.lat?.let { la -> sel.lon?.let { lo -> la to lo } }) +
             listOfNotNull(dest?.latitude?.let { la -> dest.longitude?.let { lo -> la to lo } })

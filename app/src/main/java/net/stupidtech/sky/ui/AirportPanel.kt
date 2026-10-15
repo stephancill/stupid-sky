@@ -4,15 +4,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -46,6 +40,7 @@ fun AirportPanel(
     routes: Map<String, RouteInfo>,
     onPick: (String) -> Unit,
     onClose: () -> Unit,
+    headerModifier: Modifier,
     modifier: Modifier = Modifier,
 ) {
     val board = remember(airport, aircraft, routes) {
@@ -60,57 +55,55 @@ fun AirportPanel(
         )
     }
 
-    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp), colors = panelColors(), elevation = panelElevation()) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp).navigationBarsPadding()) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(airport.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(
-                        listOfNotNull(airport.iata, airport.icao, airport.city).distinct().joinToString(" · "),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
-            }
-            Row {
-                if (airport.military) Badge("MILITARY", Color(0xFF33691E))
-                airport.elevationFt?.let {
-                    Text(
-                        "Elevation ${(it * 0.3048).roundToInt()} m",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp, start = if (airport.military) 8.dp else 0.dp),
-                    )
-                }
-            }
-
-            metar?.rawOb?.let {
+    Column(modifier.padding(horizontal = 16.dp).padding(bottom = 16.dp)) {
+        Row(headerModifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(airport.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "Weather" + (metar.fltCat?.let { c -> " · $c" } ?: ""),
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.padding(top = 12.dp),
+                    listOfNotNull(airport.iata, airport.icao, airport.city).distinct().joinToString(" · "),
+                    style = MaterialTheme.typography.bodyMedium,
                 )
-                Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
             }
-
-            Section("Arriving", board.arriving, airport, onPick)
-            Section("Departed", board.departing, airport, onPick)
-            Section("On the ground", board.onGround, airport, onPick)
-            if (board.arriving.isEmpty() && board.departing.isEmpty() && board.onGround.isEmpty()) {
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
+        }
+        Row {
+            if (airport.military) Badge("MILITARY", Color(0xFF33691E))
+            airport.elevationFt?.let {
                 Text(
-                    "No tracked flights to, from or at this airport in the loaded area.",
+                    "Elevation ${(it * 0.3048).roundToInt()} m",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp),
+                    modifier = Modifier.padding(top = 8.dp, start = if (airport.military) 8.dp else 0.dp),
                 )
             }
+        }
+
+        metar?.rawOb?.let {
             Text(
-                "Based on aircraft currently tracked and their callsign routes; not an official schedule.",
-                style = MaterialTheme.typography.labelSmall,
+                "Weather" + (metar.fltCat?.let { c -> " · $c" } ?: ""),
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(top = 12.dp),
+            )
+            Text(it, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall)
+        }
+
+        Section("Arriving", board.arriving, airport, onPick)
+        Section("Departed", board.departing, airport, onPick)
+        Section("On the ground", board.onGround, airport, onPick)
+        if (board.arriving.isEmpty() && board.departing.isEmpty() && board.onGround.isEmpty()) {
+            Text(
+                "No tracked flights to, from or at this airport in the loaded area.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 12.dp),
             )
         }
+        Text(
+            "Based on aircraft currently tracked and their callsign routes; not an official schedule.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 12.dp),
+        )
     }
 }
 

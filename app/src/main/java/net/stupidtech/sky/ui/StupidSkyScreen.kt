@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.CircleShape
@@ -56,11 +55,11 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -71,6 +70,22 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.gestures.animateTo
+import androidx.compose.foundation.gestures.AnchoredDraggableState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import net.stupidtech.sky.data.WatchEntry
 import net.stupidtech.sky.data.WatchKind
@@ -88,11 +103,15 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
     var showWatchDialog by rememberSaveable { mutableStateOf(false) }
     var showList by rememberSaveable { mutableStateOf(false) }
     var showSearch by rememberSaveable { mutableStateOf(false) }
-    var detailCollapsed by rememberSaveable { mutableStateOf(false) }
-    // Each newly selected aircraft opens expanded.
-    LaunchedEffect(state.selected?.hex) { detailCollapsed = false }
+    val sheetState = remember { AnchoredDraggableState(SheetStop.Hidden) }
+    val scope = rememberCoroutineScope()
+    // Minimising to Peek frames the flight path, as the old collapse button did.
+    LaunchedEffect(sheetState) {
+        snapshotFlow { sheetState.settledValue }.collect { if (it == SheetStop.Peek) vm.fitSelectedPath() }
+    }
 
-    Box(Modifier.fillMaxSize()) {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val containerH = constraints.maxHeight.toFloat()
         MapHost(
             state = state,
             onViewport = vm::onViewportChanged,
@@ -139,13 +158,30 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
             }
         }
 
-        val panelOpen = state.selected != null || state.selectedAirport != null || state.selectedMetar != null
-        // Panels pad their own content for the navigation bar so their background reaches the screen edge.
-        Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth()) {
+        val sel = state.selected
+        val airport = state.selectedAirport
+        val metar = state.selectedMetar
+        val sheetKey: Any? = sel?.hex ?: airport?.let { "apt:${it.icao ?: it.name}" } ?: metar?.let { "metar:${it.icaoId}" }
+        val density = LocalDensity.current
+        val navBottom = WindowInsets.navigationBars.getBottom(density)
+        val gap = with(density) { 8.dp.toPx() }
+        // Top edge of the sheet, read only in layout/draw so dragging doesn't recompose the screen.
+        fun sheetTop(): Float =
+            if (sheetKey == null) containerH else sheetState.offset.takeUnless { it.isNaN() } ?: containerH
+        // The map buttons ride on the sheet and fade out as it passes the middle of the screen.
+        fun buttonsAlpha(): Float = ((sheetTop() - containerH * 0.3f) / (containerH * 0.15f)).coerceIn(0f, 1f)
+        val buttonsVisible by remember(sheetKey) { derivedStateOf { buttonsAlpha() > 0.05f } }
+        var rowH by remember { mutableIntStateOf(0) }
+        if (buttonsVisible) {
             Row(
-                Modifier.fillMaxWidth()
-                    .then(if (panelOpen) Modifier else Modifier.navigationBarsPadding())
-                    .padding(horizontal = 12.dp).padding(bottom = 8.dp),
+                Modifier.align(Alignment.TopStart).fillMaxWidth()
+                    .onSizeChanged { rowH = it.height }
+                    .offset {
+                        val bottom = minOf(sheetTop(), containerH - navBottom)
+                        IntOffset(0, (bottom - rowH - gap).roundToInt())
+                    }
+                    .graphicsLayer { alpha = buttonsAlpha() }
+                    .padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Bottom,
             ) {
@@ -160,39 +196,56 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
                     }) { Icon(Icons.Default.MyLocation, "My location") }
                 }
             }
-            val sel = state.selected
-            val metar = state.selectedMetar
-            when {
-                sel != null -> AircraftPanel(
-                    ac = sel,
-                    enrichment = state.enrichment,
-                    routeInfo = sel.callsign?.let { state.routes[it] },
-                    legStart = state.legStart,
-                    collapsed = detailCollapsed,
-                    onCollapsedChange = { c ->
-                        detailCollapsed = c
-                        if (c) vm.fitSelectedPath()
-                    },
-                    onClose = { vm.select(null) },
-                    onWatch = {
-                        watchPrefill = when {
-                            sel.registration != null -> WatchEntry(WatchKind.REG, sel.registration)
-                            else -> WatchEntry(WatchKind.HEX, sel.hex)
-                        }
-                        showWatchDialog = true
-                    },
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
-                )
-                state.selectedAirport != null -> AirportPanel(
-                    airport = state.selectedAirport!!,
-                    metar = state.airportMetar,
-                    aircraft = state.aircraft,
-                    routes = state.routes,
-                    onPick = vm::selectAndFocus,
-                    onClose = { vm.selectAirport(null) },
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
-                )
-                metar != null -> MetarPanel(metar, onClose = { vm.selectMetar(null) }, modifier = Modifier.fillMaxWidth())
+        }
+
+        if (sheetKey != null) {
+            val close: () -> Unit = { scope.launch { sheetState.animateTo(SheetStop.Hidden, SheetSpring) } }
+            DetailSheet(
+                state = sheetState,
+                key = sheetKey,
+                containerHeight = containerH,
+                onDismiss = {
+                    when {
+                        sel != null -> vm.select(null)
+                        airport != null -> vm.selectAirport(null)
+                        else -> vm.selectMetar(null)
+                    }
+                },
+            ) { headerModifier ->
+                when {
+                    sel != null -> AircraftPanel(
+                        ac = sel,
+                        enrichment = state.enrichment,
+                        routeInfo = sel.callsign?.let { state.routes[it] },
+                        legStart = state.legStart,
+                        minimised = sheetState.targetValue == SheetStop.Peek,
+                        onToggleMinimised = {
+                            scope.launch {
+                                val to = if (sheetState.targetValue == SheetStop.Peek) sheetState.expandedStop() else SheetStop.Peek
+                                sheetState.animateTo(to, SheetSpring)
+                            }
+                        },
+                        onClose = close,
+                        onWatch = {
+                            watchPrefill = when {
+                                sel.registration != null -> WatchEntry(WatchKind.REG, sel.registration)
+                                else -> WatchEntry(WatchKind.HEX, sel.hex)
+                            }
+                            showWatchDialog = true
+                        },
+                        headerModifier = headerModifier,
+                    )
+                    airport != null -> AirportPanel(
+                        airport = airport,
+                        metar = state.airportMetar,
+                        aircraft = state.aircraft,
+                        routes = state.routes,
+                        onPick = vm::selectAndFocus,
+                        onClose = close,
+                        headerModifier = headerModifier,
+                    )
+                    metar != null -> MetarPanel(metar, onClose = close, headerModifier = headerModifier)
+                }
             }
         }
     }

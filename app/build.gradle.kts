@@ -16,7 +16,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         // Planespotters rejects generic User-Agents; set a contact you control.
-        buildConfigField("String", "CONTACT", "\"https://github.com/your-name/skywatch\"")
+        buildConfigField("String", "CONTACT", "\"https://github.com/stephancill/stupid-sky\"")
     }
 
     buildTypes {

@@ -9,7 +9,9 @@ import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.Provider
+import com.skywatch.tracker.data.RateLimitedException
 import com.skywatch.tracker.data.Settings
+import com.skywatch.tracker.data.UserLocation
 import com.skywatch.tracker.data.WatchEntry
 import com.skywatch.tracker.data.WatchKind
 import kotlinx.coroutines.CancellationException
@@ -35,6 +37,9 @@ data class Viewport(
 
 data class LatLon(val lat: Double, val lon: Double, val alt: Int?)
 
+/** A one-off request for the map to move. [zoom] null keeps the current zoom (but at least 8). */
+data class CameraMove(val lat: Double, val lon: Double, val zoom: Double?, val id: Int)
+
 data class UiState(
     val mode: Mode = Mode.ALL,
     val aircraft: List<Aircraft> = emptyList(),
@@ -50,16 +55,15 @@ data class UiState(
     val loading: Boolean = false,
     val error: String? = null,
     val lastUpdate: Long = 0,
-    /** Bumped when the map should move the camera to [cameraTarget]. */
-    val cameraTarget: Aircraft? = null,
-    val cameraNonce: Int = 0,
+    val camera: CameraMove? = null,
+    val locationGranted: Boolean = false,
 )
 
 @OptIn(FlowPreview::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val settings = Settings(app)
 
-    private val _state = MutableStateFlow(UiState())
+    private val _state = MutableStateFlow(UiState(locationGranted = UserLocation.hasPermission(app)))
     val state: StateFlow<UiState> = _state
 
     val provider = settings.provider.stateIn(viewModelScope, SharingStarted.Eagerly, Provider.ADSB_LOL)
@@ -68,24 +72,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val viewport = MutableStateFlow<Viewport?>(null)
     private val trails = HashMap<String, ArrayDeque<LatLon>>()
     private var enrichJob: Job? = null
+    private var pollJob: Job? = null
+    private var active = false
+    private var lastPollAt = 0L
+    private var pollCount = 0
+    private var backoffMs = 0L
+    private var cameraId = 0
 
     init {
         viewModelScope.launch {
             // Mode / filter changes call restartPolling() directly.
-            combine(viewport.filterNotNull().debounce(400), provider) { v, p -> v to p }
+            combine(viewport.filterNotNull().debounce(600), provider) { v, p -> v to p }
                 .collect { restartPolling() }
         }
     }
 
-    private var pollJob: Job? = null
+    /** Called from the activity: poll only while the app is on screen. */
+    fun setActive(isActive: Boolean) {
+        active = isActive
+        if (isActive) restartPolling() else pollJob?.cancel()
+    }
 
     private fun restartPolling() {
         pollJob?.cancel()
+        if (!active) return
         pollJob = viewModelScope.launch {
+            // Don't fire a new request straight away if we just polled (e.g. while panning).
+            val sinceLast = System.currentTimeMillis() - lastPollAt
+            val wait = maxOf(MIN_GAP_MS - sinceLast, backoffMs - sinceLast)
+            if (wait > 0) delay(wait)
             while (true) {
                 poll()
                 refreshMetarsIfNeeded()
-                delay(POLL_MS)
+                delay(if (backoffMs > 0) backoffMs else POLL_MS)
             }
         }
     }
@@ -93,24 +112,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun poll() {
         val v = viewport.value ?: return
         val p = provider.value
-        val s = _state.value
+        val mode = _state.value.mode
+        lastPollAt = System.currentTimeMillis()
+        pollCount++
         _state.update { it.copy(loading = true) }
         try {
-            var list = when (s.mode) {
+            var list = when (mode) {
                 Mode.ALL -> FlightData.area(p, v.lat, v.lon, v.radiusNm)
                 Mode.MILITARY -> FlightData.military(p)
             }.filter { it.hasPosition }
 
-            // Keep tracking the selected aircraft even after it leaves the queried area.
+            // Keep tracking the selected aircraft after it leaves the queried area,
+            // but only every third poll to keep request volume down.
             val sel = _state.value.selected
-            if (sel != null && list.none { it.hex == sel.hex }) {
+            if (sel != null && list.none { it.hex == sel.hex } && pollCount % 3 == 0) {
                 runCatching { FlightData.lookup(p, WatchKind.HEX, sel.hex) }
                     .getOrNull()?.firstOrNull { it.hasPosition }?.let { list = list + it }
             }
 
+            backoffMs = 0
             recordTrails(list)
-            val hide = _state.value.hideGround
-            val shown = if (hide) list.filter { !it.onGround } else list
+            val shown = if (_state.value.hideGround) list.filter { !it.onGround } else list
             val newSel = sel?.let { old -> list.firstOrNull { it.hex == old.hex } ?: old }
             _state.update {
                 it.copy(
@@ -124,7 +146,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
         } catch (e: CancellationException) {
             throw e
+        } catch (e: RateLimitedException) {
+            // Honour Retry-After when sent, otherwise back off exponentially: 20 s, 40 s, 80 s, 160 s max.
+            backoffMs = e.retryAfterSec?.times(1000)
+                ?: (if (backoffMs == 0L) 20_000L else (backoffMs * 2).coerceAtMost(160_000L))
+            _state.update {
+                it.copy(loading = false, error = "${e.host} is busy, retrying in ${backoffMs / 1000}s")
+            }
         } catch (e: Exception) {
+            backoffMs = 0
             _state.update { it.copy(loading = false, error = e.message ?: "Network error") }
         }
     }
@@ -147,6 +177,28 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewport.value = v
     }
 
+    // ---- location ----
+
+    fun onLocationPermission(granted: Boolean) {
+        _state.update { it.copy(locationGranted = granted) }
+        if (granted) locateUser()
+    }
+
+    /** Centre the map on the device; used at startup and by the "my location" button. */
+    fun locateUser() = viewModelScope.launch {
+        val loc = UserLocation.current(getApplication()) ?: run {
+            _state.update { it.copy(error = "Location unavailable") }
+            return@launch
+        }
+        moveCamera(loc.latitude, loc.longitude, USER_ZOOM)
+    }
+
+    private fun moveCamera(lat: Double, lon: Double, zoom: Double?) {
+        _state.update { it.copy(camera = CameraMove(lat, lon, zoom, ++cameraId)) }
+    }
+
+    // ---- controls ----
+
     fun setMode(m: Mode) {
         if (m == _state.value.mode) return
         _state.update { it.copy(mode = m, aircraft = emptyList()) }
@@ -155,11 +207,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setHideGround(h: Boolean) {
-        _state.update { it.copy(hideGround = h) }
-        restartPolling()
+        _state.update { s ->
+            s.copy(hideGround = h, aircraft = if (h) s.aircraft.filter { !it.onGround } else s.aircraft)
+        }
     }
 
-    fun setProvider(p: Provider) = viewModelScope.launch { settings.setProvider(p) }
+    fun setProvider(p: Provider) = viewModelScope.launch {
+        backoffMs = 0
+        settings.setProvider(p)
+    }
 
     fun select(hex: String?) {
         enrichJob?.cancel()
@@ -179,10 +235,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 enrichment = null,
                 selectedMetar = null,
                 selectedTrail = trails[ac.hex]?.toList().orEmpty(),
-                cameraTarget = if (moveCamera) ac else it.cameraTarget,
-                cameraNonce = if (moveCamera) it.cameraNonce + 1 else it.cameraNonce,
             )
         }
+        if (moveCamera) moveCamera(ac.lat!!, ac.lon!!, null)
         enrichJob = viewModelScope.launch {
             val e = FlightData.enrich(ac)
             _state.update { if (it.selected?.hex == ac.hex) it.copy(enrichment = e) else it }
@@ -252,8 +307,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun clearError() = _state.update { it.copy(error = null) }
 
     companion object {
-        private const val POLL_MS = 5_000L
+        private const val POLL_MS = 10_000L
+        private const val MIN_GAP_MS = 3_000L
         private const val METAR_MS = 10 * 60_000L
-        private const val MAX_TRAIL = 720 // ~1 hour at 5 s
+        private const val MAX_TRAIL = 360 // ~1 hour at 10 s
+        private const val USER_ZOOM = 8.5
     }
 }

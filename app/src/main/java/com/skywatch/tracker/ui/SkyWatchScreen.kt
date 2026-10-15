@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Thermostat
 import androidx.compose.material3.AlertDialog
@@ -42,6 +43,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -67,7 +69,7 @@ import com.skywatch.tracker.data.WatchKind
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit) {
+fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestLocation: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
     val provider by vm.provider.collectAsStateWithLifecycle()
     val watchlist by vm.watchlist.collectAsStateWithLifecycle()
@@ -112,7 +114,16 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit) {
         Column(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding(),
         ) {
-            StatusPill(state, provider, Modifier.padding(start = 12.dp, bottom = 8.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                StatusPill(state, provider, Modifier.weight(1f, fill = false))
+                Spacer(Modifier.weight(1f))
+                SmallFloatingActionButton(onClick = {
+                    if (state.locationGranted) vm.locateUser() else requestLocation()
+                }) { Icon(Icons.Default.MyLocation, "My location") }
+            }
             val sel = state.selected
             val metar = state.selectedMetar
             when {

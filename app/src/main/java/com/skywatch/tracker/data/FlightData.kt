@@ -4,7 +4,10 @@ import com.skywatch.tracker.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import okhttp3.Call
@@ -43,6 +46,9 @@ enum class Provider(val label: String, val baseUrl: String) {
         const val MAX_RADIUS_NM = 250
     }
 }
+
+class RateLimitedException(val host: String, val retryAfterSec: Long?) :
+    IOException("Rate limited by $host")
 
 object FlightData {
     private val userAgent = "SkyWatch/${BuildConfig.VERSION_NAME} (+${BuildConfig.CONTACT})"
@@ -133,10 +139,38 @@ object FlightData {
     }
 
     suspend fun fetch(url: String): String = withContext(Dispatchers.IO) {
-        val call = http.newCall(Request.Builder().url(url).build())
-        call.await().use { resp ->
-            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} for $url")
-            resp.body?.string() ?: throw IOException("Empty body for $url")
+        val request = Request.Builder().url(url).build()
+        val host = request.url.host
+        Throttle.acquire(host)
+        http.newCall(request).await().use { resp ->
+            if (resp.code == 429) {
+                val retryAfter = resp.header("Retry-After")?.toLongOrNull()
+                throw RateLimitedException(host, retryAfter)
+            }
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} from $host")
+            resp.body?.string() ?: throw IOException("Empty response from $host")
+        }
+    }
+
+    /** Serialises requests per host and keeps a minimum gap between them. */
+    private object Throttle {
+        private val locks = ConcurrentHashMap<String, Mutex>()
+        private val last = ConcurrentHashMap<String, Long>()
+
+        private fun gapFor(host: String): Long = when {
+            host.endsWith("adsb.fi") -> 1_100   // documented 1 req/s
+            host.endsWith("adsb.lol") -> 1_000
+            host.endsWith("adsbdb.com") -> 500
+            host.endsWith("planespotters.net") -> 500
+            else -> 250
+        }
+
+        suspend fun acquire(host: String) {
+            locks.getOrPut(host) { Mutex() }.withLock {
+                val wait = (last[host] ?: 0L) + gapFor(host) - System.currentTimeMillis()
+                if (wait > 0) delay(wait)
+                last[host] = System.currentTimeMillis()
+            }
         }
     }
 

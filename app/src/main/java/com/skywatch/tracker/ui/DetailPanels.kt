@@ -66,6 +66,7 @@ fun AircraftPanel(
                 if (ac.isEmergency) Badge("SQUAWK ${ac.squawk ?: "EMERG"}", Color(0xFFD50000))
                 if (ac.isMilitary) Badge("MILITARY", Color(0xFF33691E))
                 if (ac.isMlat) Badge("MLAT", Color(0xFF455A64))
+                if (ac.fromOpenSky) Badge("OPENSKY", Color(0xFF0277BD))
                 if (ac.isPia) Badge("PIA", Color(0xFF4A148C))
                 if (ac.isLadd) Badge("LADD", Color(0xFF4A148C))
                 if (ac.onGround) Badge("ON GROUND", Color(0xFF616161))
@@ -123,7 +124,8 @@ fun AircraftPanel(
                     ac.windSpeed?.let { "Wind" to "${ac.windDir ?: "?"}° / $it kt" },
                     ac.outsideAirTemp?.let { "OAT" to "$it °C" },
                     ac.rssi?.let { "Signal" to "%.1f dBFS".format(it) },
-                    ac.seen?.let { "Last seen" to "%.1f s".format(it) },
+                    ac.seen?.let { "Last seen" to if (it < 90) "%.1f s".format(it) else "${(it / 60).toInt()} min" },
+                    if (ac.fromOpenSky) "Source" to "OpenSky Network" else null,
                 ),
             )
         }

@@ -16,11 +16,15 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Watchlist alerts**: get a notification when a registration, callsign, hex or military callsign prefix
   (e.g. `RCH`, `FORTE`) is airborne. Checked every 15 minutes in the background.
 - **Switch data source** between adsb.lol and adsb.fi.
+- **OpenSky gap-fill** merges in aircraft the main feed misses, such as aircraft on the ground at airports with no
+  nearby adsb.lol/adsb.fi receiver. Uses the free tier only: without an account it refreshes about every 5 min;
+  with a free OpenSky API client (Settings) about every 30 s. The refresh rate adjusts so the daily credits last until they reset.
 
 ## Data sources
 | What | Source | Terms |
 |---|---|---|
 | Positions | [adsb.lol](https://api.adsb.lol/docs) / [adsb.fi](https://github.com/adsbfi/opendata) | ODbL / open data, 1 req/s (adsb.fi) |
+| Gap-fill positions | [OpenSky Network](https://openskynetwork.github.io/opensky-api/rest.html) | free, non-commercial, daily credit limit |
 | Routes, aircraft registry | [adsbdb.com](https://www.adsbdb.com) | free |
 | Photos | [Planespotters.net](https://www.planespotters.net/photo/api) | attribution + descriptive User-Agent required |
 | METAR | [aviationweather.gov](https://aviationweather.gov/data/api/) | US gov, free |

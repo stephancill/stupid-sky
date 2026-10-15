@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.skywatch.tracker.alerts.AlertWorker
 import com.skywatch.tracker.data.Aircraft
+import com.skywatch.tracker.data.BoundingBox
+import com.skywatch.tracker.data.OpenSky
 import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Metar
@@ -57,6 +59,9 @@ data class UiState(
     val lastUpdate: Long = 0,
     val camera: CameraMove? = null,
     val locationGranted: Boolean = false,
+    /** Aircraft added by OpenSky that the main feed didn't have. */
+    val openSkyAdded: Int = 0,
+    val openSkyStatus: String? = null,
 )
 
 @OptIn(FlowPreview::class)
@@ -68,6 +73,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val provider = settings.provider.stateIn(viewModelScope, SharingStarted.Eagerly, Provider.ADSB_LOL)
     val watchlist = settings.watchlist.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val openSkyEnabled = settings.openSkyEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val openSkyCredentials = settings.openSkyCredentials.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val viewport = MutableStateFlow<Viewport?>(null)
     private val trails = HashMap<String, ArrayDeque<LatLon>>()
@@ -79,18 +86,139 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var backoffMs = 0L
     private var cameraId = 0
 
+    // Latest results from each source, merged into state.aircraft.
+    private var lastMain: List<Aircraft> = emptyList()
+    private var openSkyList: List<Aircraft> = emptyList()
+    private var openSkyFetchedAt = 0L
+    private var openSkyBox: BoundingBox? = null
+    private var openSkyCredits: Int? = null
+    private var openSkyRetryAt = 0L
+    private var openSkyJob: Job? = null
+
     init {
         viewModelScope.launch {
             // Mode / filter changes call restartPolling() directly.
             combine(viewport.filterNotNull().debounce(600), provider) { v, p -> v to p }
                 .collect { restartPolling() }
         }
+        viewModelScope.launch {
+            combine(openSkyEnabled, openSkyCredentials) { on, c -> on to c }.collect {
+                openSkyCredits = null
+                openSkyRetryAt = 0
+                restartOpenSky(immediate = true)
+            }
+        }
+        viewModelScope.launch {
+            // Fetch OpenSky early when the user pans somewhere it hasn't covered yet.
+            viewport.filterNotNull().debounce(1500).collect { v ->
+                val box = openSkyBox
+                val outside = box == null || v.lat !in box.south..box.north || v.lon !in box.west..box.east
+                val minGap = if (openSkyCredentials.value != null) 30_000L else 120_000L
+                if (outside && System.currentTimeMillis() - openSkyFetchedAt > minGap) restartOpenSky(immediate = true)
+            }
+        }
     }
 
     /** Called from the activity: poll only while the app is on screen. */
     fun setActive(isActive: Boolean) {
         active = isActive
-        if (isActive) restartPolling() else pollJob?.cancel()
+        if (isActive) {
+            restartPolling()
+            restartOpenSky(immediate = false)
+        } else {
+            pollJob?.cancel()
+            openSkyJob?.cancel()
+        }
+    }
+
+    private fun restartOpenSky(immediate: Boolean) {
+        openSkyJob?.cancel()
+        if (!active || !openSkyEnabled.value) {
+            if (!openSkyEnabled.value) {
+                openSkyList = emptyList()
+                publish()
+            }
+            return
+        }
+        openSkyJob = viewModelScope.launch {
+            val hasAccount = openSkyCredentials.value != null
+            if (!immediate) {
+                val due = openSkyFetchedAt + OpenSky.pollIntervalSec(openSkyCredits, hasAccount) * 1000
+                val wait = due - System.currentTimeMillis()
+                if (wait > 0) delay(wait)
+            }
+            while (true) {
+                val retryWait = openSkyRetryAt - System.currentTimeMillis()
+                if (retryWait > 0) delay(retryWait)
+                pollOpenSky()
+                delay(OpenSky.pollIntervalSec(openSkyCredits, hasAccount) * 1000)
+            }
+        }
+    }
+
+    private suspend fun pollOpenSky() {
+        val v = viewport.value ?: return
+        // The global military view doesn't need gap-filling at one airport.
+        if (_state.value.mode != Mode.ALL) return
+        val box = BoundingBox(v.south, v.west, v.north, v.east)
+        try {
+            val r = OpenSky.states(box, openSkyCredentials.value)
+            openSkyList = r.aircraft
+            openSkyFetchedAt = System.currentTimeMillis()
+            openSkyBox = box.cropAroundCentre(5.0)
+            openSkyCredits = r.creditsRemaining ?: openSkyCredits
+            openSkyStatus(null)
+            publish()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: OpenSky.RateLimited) {
+            val wait = e.retryAfterSec ?: OpenSky.secondsUntilReset()
+            openSkyRetryAt = System.currentTimeMillis() + wait * 1000
+            openSkyCredits = 0
+            openSkyStatus("OpenSky credits used up · back in ${formatDuration(wait)}")
+        } catch (e: Exception) {
+            openSkyStatus("OpenSky: ${e.message ?: "error"}")
+        }
+    }
+
+    private fun openSkyStatus(error: String?) {
+        val text = error ?: run {
+            val next = OpenSky.pollIntervalSec(openSkyCredits, openSkyCredentials.value != null)
+            val credits = openSkyCredits?.let { "$it credits left · " }.orEmpty()
+            "OpenSky: ${credits}refresh every ${formatDuration(next)}"
+        }
+        _state.update { it.copy(openSkyStatus = text) }
+    }
+
+    /** Merge main feed + OpenSky gap-fill and push to the UI. */
+    private fun publish() {
+        val now = System.currentTimeMillis()
+        val mainHex = lastMain.mapTo(HashSet()) { it.hex }
+        val sinceFetch = (now - openSkyFetchedAt) / 1000.0
+        val extra = if (_state.value.mode == Mode.ALL) {
+            openSkyList.filter { a ->
+                if (a.hex in mainHex) return@filter false
+                val age = (a.seenPos ?: a.seen ?: 0.0) + sinceFetch
+                // Parked aircraft barely move, so older ground positions are still useful;
+                // airborne ones go stale quickly.
+                if (a.onGround) age < 15 * 60 else age < 60
+            }
+        } else emptyList()
+
+        val merged = lastMain + extra
+        recordTrails(merged)
+        val filtered = if (_state.value.hideGround) merged.filter { !it.onGround } else merged
+        _state.update { s ->
+            val newSel = s.selected?.let { old -> merged.firstOrNull { it.hex == old.hex } ?: old }
+            // Keep a selected aircraft on the map even if neither feed returned it this time.
+            val shown = if (newSel != null && filtered.none { it.hex == newSel.hex }) filtered + newSel else filtered
+            s.copy(
+                aircraft = shown,
+                selected = newSel,
+                selectedTrail = newSel?.let { a -> trails[a.hex]?.toList() }.orEmpty(),
+                openSkyAdded = extra.size,
+            )
+        }
     }
 
     private fun restartPolling() {
@@ -131,19 +259,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             backoffMs = 0
-            recordTrails(list)
-            val shown = if (_state.value.hideGround) list.filter { !it.onGround } else list
-            val newSel = sel?.let { old -> list.firstOrNull { it.hex == old.hex } ?: old }
-            _state.update {
-                it.copy(
-                    aircraft = shown,
-                    selected = newSel,
-                    selectedTrail = newSel?.let { a -> trails[a.hex]?.toList() }.orEmpty(),
-                    loading = false,
-                    error = null,
-                    lastUpdate = System.currentTimeMillis(),
-                )
-            }
+            lastMain = list
+            publish()
+            _state.update { it.copy(loading = false, error = null, lastUpdate = System.currentTimeMillis()) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: RateLimitedException) {
@@ -201,15 +319,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMode(m: Mode) {
         if (m == _state.value.mode) return
-        _state.update { it.copy(mode = m, aircraft = emptyList()) }
+        lastMain = emptyList()
+        _state.update { it.copy(mode = m, aircraft = emptyList(), openSkyAdded = 0) }
         trails.clear()
         restartPolling()
     }
 
     fun setHideGround(h: Boolean) {
-        _state.update { s ->
-            s.copy(hideGround = h, aircraft = if (h) s.aircraft.filter { !it.onGround } else s.aircraft)
-        }
+        _state.update { it.copy(hideGround = h) }
+        publish()
+    }
+
+    fun setOpenSkyEnabled(on: Boolean) = viewModelScope.launch {
+        settings.setOpenSkyEnabled(on)
+        if (!on) _state.update { it.copy(openSkyStatus = null, openSkyAdded = 0) }
+    }
+
+    fun setOpenSkyCredentials(id: String, secret: String) = viewModelScope.launch {
+        settings.setOpenSkyCredentials(id, secret)
     }
 
     fun setProvider(p: Provider) = viewModelScope.launch {
@@ -305,6 +432,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun removeWatch(e: WatchEntry) = viewModelScope.launch { settings.removeWatch(e) }
 
     fun clearError() = _state.update { it.copy(error = null) }
+
+    private fun formatDuration(sec: Long): String = when {
+        sec < 90 -> "${sec}s"
+        sec < 5400 -> "${(sec + 30) / 60} min"
+        else -> "${sec / 3600} h ${(sec % 3600) / 60} min"
+    }
 
     companion object {
         private const val POLL_MS = 10_000L

@@ -2,6 +2,7 @@ package com.skywatch.tracker.data
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.doubleOrNull
@@ -42,7 +43,10 @@ data class Aircraft(
     @SerialName("ws") val windSpeed: Int? = null,
     @SerialName("wd") val windDir: Int? = null,
     @SerialName("nav_altitude_mcp") val selectedAltitude: Int? = null,
+    /** Which network this report came from; not part of the JSON. */
+    @Transient val source: String = SOURCE_MAIN,
 ) {
+    val fromOpenSky: Boolean get() = source == SOURCE_OPENSKY
     val callsign: String? get() = flight?.trim()?.ifEmpty { null }
     val isMilitary: Boolean get() = dbFlags and 1 != 0
     val isInteresting: Boolean get() = dbFlags and 2 != 0
@@ -59,6 +63,8 @@ data class Aircraft(
 
     companion object {
         val EMERGENCY_SQUAWKS = setOf("7500", "7600", "7700")
+        const val SOURCE_MAIN = "main"
+        const val SOURCE_OPENSKY = "opensky"
     }
 }
 

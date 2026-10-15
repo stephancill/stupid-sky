@@ -60,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,6 +75,8 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
     val state by vm.state.collectAsStateWithLifecycle()
     val provider by vm.provider.collectAsStateWithLifecycle()
     val watchlist by vm.watchlist.collectAsStateWithLifecycle()
+    val openSkyOn by vm.openSkyEnabled.collectAsStateWithLifecycle()
+    val openSkyCreds by vm.openSkyCredentials.collectAsStateWithLifecycle()
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var watchPrefill by remember { mutableStateOf<WatchEntry?>(null) }
     var showWatchDialog by rememberSaveable { mutableStateOf(false) }
@@ -152,6 +156,12 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 onProvider = vm::setProvider,
                 hideGround = state.hideGround,
                 onHideGround = vm::setHideGround,
+                openSkyOn = openSkyOn,
+                onOpenSky = vm::setOpenSkyEnabled,
+                openSkyHasAccount = openSkyCreds != null,
+                openSkyClientId = openSkyCreds?.clientId.orEmpty(),
+                openSkyStatus = state.openSkyStatus,
+                onOpenSkyCredentials = vm::setOpenSkyCredentials,
                 watchlist = watchlist,
                 onAddWatch = { watchPrefill = null; showWatchDialog = true },
                 onRemoveWatch = vm::removeWatch,
@@ -210,8 +220,9 @@ private fun StatusPill(state: UiState, provider: Provider, modifier: Modifier) {
                 Spacer(Modifier.width(6.dp))
             }
             val mil = state.aircraft.count { it.isMilitary }
+            val openSky = if (state.openSkyAdded > 0) " + ${state.openSkyAdded} OpenSky" else ""
             val text = state.error?.let { "⚠ $it" }
-                ?: "${state.aircraft.size} aircraft · $mil mil · ${provider.label}"
+                ?: "${state.aircraft.size} aircraft · $mil mil · ${provider.label}$openSky"
             Text(text, color = Color.White, style = MaterialTheme.typography.labelMedium)
         }
     }
@@ -223,6 +234,12 @@ private fun SettingsContent(
     onProvider: (Provider) -> Unit,
     hideGround: Boolean,
     onHideGround: (Boolean) -> Unit,
+    openSkyOn: Boolean,
+    onOpenSky: (Boolean) -> Unit,
+    openSkyHasAccount: Boolean,
+    openSkyClientId: String,
+    openSkyStatus: String?,
+    onOpenSkyCredentials: (String, String) -> Unit,
     watchlist: List<WatchEntry>,
     onAddWatch: () -> Unit,
     onRemoveWatch: (WatchEntry) -> Unit,
@@ -240,6 +257,15 @@ private fun SettingsContent(
             Text("Hide aircraft on the ground", Modifier.weight(1f))
             Switch(checked = hideGround, onCheckedChange = onHideGround)
         }
+        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+        OpenSkySection(
+            on = openSkyOn,
+            onToggle = onOpenSky,
+            hasAccount = openSkyHasAccount,
+            clientId = openSkyClientId,
+            status = openSkyStatus,
+            onSave = onOpenSkyCredentials,
+        )
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Watchlist alerts", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -264,7 +290,7 @@ private fun SettingsContent(
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text(
-            "Positions: adsb.lol (ODbL) / adsb.fi open data · Routes & aircraft: adsbdb.com · " +
+            "Positions: adsb.lol (ODbL) / adsb.fi open data / The OpenSky Network (opensky-network.org) · Routes & aircraft: adsbdb.com · " +
                 "Photos: Planespotters.net · Weather: NOAA aviationweather.gov, RainViewer · " +
                 "Map: OpenFreeMap, © OpenStreetMap contributors",
             style = MaterialTheme.typography.bodySmall,
@@ -313,4 +339,66 @@ private fun WatchDialog(initial: WatchEntry?, onDismiss: () -> Unit, onAdd: (Wat
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun OpenSkySection(
+    on: Boolean,
+    onToggle: (Boolean) -> Unit,
+    hasAccount: Boolean,
+    clientId: String,
+    status: String?,
+    onSave: (String, String) -> Unit,
+) {
+    var id by rememberSaveable(clientId) { mutableStateOf(clientId) }
+    var secret by rememberSaveable { mutableStateOf("") }
+    val uri = LocalUriHandler.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("OpenSky gap-fill", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Adds aircraft the main feed misses, e.g. on the ground at airports. Free, non-commercial.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = on, onCheckedChange = onToggle)
+    }
+    if (!on) return
+    status?.let {
+        Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 6.dp))
+    }
+    Text(
+        if (hasAccount) "Using your OpenSky account (refreshes about every 30 s)."
+        else "No account: refreshes about every 5 min. A free account makes it about every 30 s.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+    OutlinedTextField(
+        value = id,
+        onValueChange = { id = it },
+        label = { Text("API client ID (optional)") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    )
+    OutlinedTextField(
+        value = secret,
+        onValueChange = { secret = it },
+        label = { Text(if (hasAccount) "Client secret (saved)" else "Client secret") },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+    )
+    Row {
+        TextButton(onClick = { uri.openUri("https://opensky-network.org/my-opensky/account") }) {
+            Text("Get a free account")
+        }
+        Spacer(Modifier.weight(1f))
+        if (hasAccount) TextButton(onClick = { id = ""; secret = ""; onSave("", "") }) { Text("Remove") }
+        TextButton(
+            enabled = id.isNotBlank() && secret.isNotBlank(),
+            onClick = { onSave(id, secret); secret = "" },
+        ) { Text("Save") }
+    }
 }

@@ -1,6 +1,7 @@
 package com.skywatch.tracker.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -36,6 +37,22 @@ private val Context.store by preferencesDataStore("skywatch")
 class Settings(private val context: Context) {
     private val watchKey = stringSetPreferencesKey("watchlist")
     private val providerKey = stringPreferencesKey("provider")
+    private val openSkyOnKey = booleanPreferencesKey("opensky_on")
+    private val openSkyIdKey = stringPreferencesKey("opensky_id")
+    private val openSkySecretKey = stringPreferencesKey("opensky_secret")
+
+    val openSkyEnabled: Flow<Boolean> = context.store.data.map { it[openSkyOnKey] ?: true }
+
+    val openSkyCredentials: Flow<OpenSkyCredentials?> = context.store.data.map { prefs ->
+        OpenSkyCredentials(prefs[openSkyIdKey].orEmpty(), prefs[openSkySecretKey].orEmpty()).takeIf { it.isSet }
+    }
+
+    suspend fun setOpenSkyEnabled(on: Boolean) = context.store.edit { it[openSkyOnKey] = on }
+
+    suspend fun setOpenSkyCredentials(id: String, secret: String) = context.store.edit {
+        it[openSkyIdKey] = id.trim()
+        it[openSkySecretKey] = secret.trim()
+    }
 
     val watchlist: Flow<List<WatchEntry>> = context.store.data.map { prefs ->
         prefs[watchKey].orEmpty().mapNotNull(WatchEntry::decode).sortedBy { it.display }

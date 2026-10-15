@@ -1,0 +1,65 @@
+package com.skywatch.tracker.data
+
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+
+enum class WatchKind(val label: String, val hint: String) {
+    REG("Registration", "e.g. G-VSRB"),
+    CALLSIGN("Callsign", "exact, e.g. RCH401"),
+    HEX("ICAO hex", "e.g. ae56ab"),
+    MIL_PREFIX("Military callsign prefix", "e.g. RCH, FORTE, DUKE");
+}
+
+data class WatchEntry(val kind: WatchKind, val value: String) {
+    fun encode() = "${kind.name}:$value"
+    val display get() = "${kind.label}: $value"
+
+    companion object {
+        fun decode(s: String): WatchEntry? {
+            val i = s.indexOf(':')
+            if (i < 0) return null
+            val kind = runCatching { WatchKind.valueOf(s.substring(0, i)) }.getOrNull() ?: return null
+            return WatchEntry(kind, s.substring(i + 1))
+        }
+    }
+}
+
+private val Context.store by preferencesDataStore("skywatch")
+
+class Settings(private val context: Context) {
+    private val watchKey = stringSetPreferencesKey("watchlist")
+    private val providerKey = stringPreferencesKey("provider")
+
+    val watchlist: Flow<List<WatchEntry>> = context.store.data.map { prefs ->
+        prefs[watchKey].orEmpty().mapNotNull(WatchEntry::decode).sortedBy { it.display }
+    }
+
+    val provider: Flow<Provider> = context.store.data.map { prefs ->
+        prefs[providerKey]?.let { runCatching { Provider.valueOf(it) }.getOrNull() } ?: Provider.ADSB_LOL
+    }
+
+    suspend fun setProvider(p: Provider) = context.store.edit { it[providerKey] = p.name }
+
+    suspend fun addWatch(e: WatchEntry) = context.store.edit {
+        it[watchKey] = it[watchKey].orEmpty() + e.encode()
+    }
+
+    suspend fun removeWatch(e: WatchEntry) = context.store.edit {
+        it[watchKey] = it[watchKey].orEmpty() - e.encode()
+    }
+
+    /** Last time we alerted on a given aircraft for a given entry, so we don't spam. */
+    suspend fun lastAlerted(id: String): Long =
+        context.store.data.first()[longPreferencesKey("alerted_$id")] ?: 0L
+
+    suspend fun markAlerted(id: String, at: Long) = context.store.edit {
+        it[longPreferencesKey("alerted_$id")] = at
+    }
+}

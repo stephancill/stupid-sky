@@ -1,6 +1,7 @@
 package com.skywatch.tracker.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,7 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Flight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.MyLocation
@@ -55,6 +59,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -72,6 +77,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.skywatch.tracker.data.WatchEntry
 import com.skywatch.tracker.data.WatchKind
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,7 +110,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                FilledTonalIconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Menu, "Settings") }
+                FilledTonalIconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Settings, "Settings") }
                 Spacer(Modifier.weight(1f))
                 FilledIconToggleButton(checked = showSearch, onCheckedChange = { showSearch = it }) {
                     Icon(Icons.Default.Search, "Search")
@@ -126,8 +132,13 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 )
             }
             // Panning never triggers a request on its own; offer an explicit refresh instead.
+            // Re-check every 15 s so the banner can appear without any other state change.
+            val now by produceState(System.currentTimeMillis()) {
+                while (true) { delay(15_000); value = System.currentTimeMillis() }
+            }
+            val staleLong = state.areaStaleSince?.let { now - it >= STALE_BANNER_MS } == true
             AnimatedVisibility(
-                visible = state.areaStale,
+                visible = state.areaStale && staleLong,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
                 ExtendedFloatingActionButton(
@@ -149,7 +160,13 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             ) {
                 StatusPill(state, Modifier.weight(1f, fill = false))
                 Spacer(Modifier.weight(1f))
-                SmallFloatingActionButton(onClick = vm::refreshArea) { Icon(Icons.Default.Refresh, "Refresh now") }
+                SmallFloatingActionButton(
+                    onClick = vm::refreshArea,
+                    containerColor = if (state.areaStale) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = if (state.areaStale) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onPrimaryContainer,
+                ) { Icon(Icons.Default.Refresh, if (state.areaStale) "Refresh this area" else "Refresh now") }
                 Spacer(Modifier.width(8.dp))
                 SmallFloatingActionButton(onClick = {
                     if (state.locationGranted) vm.locateUser() else requestLocation()
@@ -194,8 +211,6 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
     if (showSettings) {
         ModalBottomSheet(onDismissRequest = { showSettings = false }) {
             SettingsContent(
-                hideGround = state.hideGround,
-                onHideGround = vm::setHideGround,
                 showLogos = state.showLogos,
                 onShowLogos = vm::setLogosEnabled,
                 openSkyOn = openSkyOn,
@@ -272,28 +287,38 @@ private fun SearchBar(onClose: () -> Unit, onSearch: (String, (Boolean) -> Unit)
     }
 }
 
+/** Bottom-left: aircraft icon + how many aircraft are in view; a spinner while loading, ⚠ on errors. */
 @Composable
 private fun StatusPill(state: UiState, modifier: Modifier) {
+    val inView = state.viewport?.let { v -> state.aircraft.count { it.inside(v) } } ?: state.aircraft.size
     Surface(modifier, shape = RoundedCornerShape(16.dp), color = Color(0xCC000000)) {
-        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Flight, contentDescription = "Aircraft in view", tint = Color.White, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("$inView", color = Color.White, style = MaterialTheme.typography.labelLarge)
             if (state.loading) {
+                Spacer(Modifier.width(8.dp))
                 CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = Color.White)
-                Spacer(Modifier.width(6.dp))
             }
-            val mil = state.aircraft.count { it.isMilitary }
-            val openSky = if (state.openSkyAdded > 0) " + ${state.openSkyAdded} OpenSky" else ""
-            val down = if (state.failedSources.isNotEmpty()) " · ${state.failedSources.joinToString()} busy" else ""
-            val text = state.error?.let { "⚠ $it" }
-                ?: "${state.aircraft.size} aircraft · $mil mil$openSky$down"
-            Text(text, color = Color.White, style = MaterialTheme.typography.labelMedium)
+            if (state.error != null) {
+                Spacer(Modifier.width(8.dp))
+                Text("⚠ ${shortError(state.error)}", color = Color(0xFFFFD54F), style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
 
+private fun shortError(e: String): String = when {
+    "busy" in e || "Rate" in e -> "busy, retrying"
+    "Location" in e -> "no location"
+    "Radar" in e -> "radar unavailable"
+    else -> "offline"
+}
+
+private const val STALE_BANNER_MS = 5 * 60_000L
+
 @Composable
 private fun SettingsContent(
-    hideGround: Boolean,
-    onHideGround: (Boolean) -> Unit,
     showLogos: Boolean,
     onShowLogos: (Boolean) -> Unit,
     openSkyOn: Boolean,
@@ -307,30 +332,10 @@ private fun SettingsContent(
     onRemoveWatch: (WatchEntry) -> Unit,
 ) {
     Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 32.dp)) {
-        Text("Data", style = MaterialTheme.typography.titleMedium)
-        Text(
-            "adsb.lol and adsb.fi are queried together and merged automatically.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Hide aircraft on the ground", Modifier.weight(1f))
-            Switch(checked = hideGround, onCheckedChange = onHideGround)
-        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Show airline logos on the map", Modifier.weight(1f))
             Switch(checked = showLogos, onCheckedChange = onShowLogos)
         }
-        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-        OpenSkySection(
-            on = openSkyOn,
-            onToggle = onOpenSky,
-            hasAccount = openSkyHasAccount,
-            clientId = openSkyClientId,
-            status = openSkyStatus,
-            onSave = onOpenSkyCredentials,
-        )
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Watchlist alerts", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
@@ -351,6 +356,27 @@ private fun SettingsContent(
                         IconButton(onClick = { onRemoveWatch(e) }) { Icon(Icons.Default.Delete, "Remove") }
                     }
                 }
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 12.dp))
+        var advanced by rememberSaveable { mutableStateOf(false) }
+        Row(
+            Modifier.fillMaxWidth().clickable { advanced = !advanced }.padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Advanced", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Icon(if (advanced) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, null)
+        }
+        AnimatedVisibility(visible = advanced) {
+            Column(Modifier.padding(top = 8.dp)) {
+                OpenSkySection(
+                    on = openSkyOn,
+                    onToggle = onOpenSky,
+                    hasAccount = openSkyHasAccount,
+                    clientId = openSkyClientId,
+                    status = openSkyStatus,
+                    onSave = onOpenSkyCredentials,
+                )
             }
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))

@@ -53,7 +53,6 @@ data class UiState(
     val selected: Aircraft? = null,
     val enrichment: Enrichment? = null,
     val selectedTrail: List<LatLon> = emptyList(),
-    val hideGround: Boolean = false,
     val showRadar: Boolean = false,
     val radarTiles: String? = null,
     val showMetars: Boolean = false,
@@ -71,6 +70,8 @@ data class UiState(
     val viewport: Viewport? = null,
     /** The map has moved away from the area last loaded; offer "Refresh this area". */
     val areaStale: Boolean = false,
+    /** When the view first moved away from the loaded area (for the delayed refresh banner). */
+    val areaStaleSince: Long? = null,
     /** Networks that failed on the last refresh (the others still supplied data). */
     val failedSources: List<String> = emptyList(),
     /** Airline and origin/destination by callsign, filled in progressively in the background. */
@@ -221,7 +222,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         val merged = lastMain + extra
         recordTrails(merged)
-        val filtered = if (_state.value.hideGround) merged.filter { !it.onGround } else merged
+        val filtered = merged
         _state.update { s ->
             val newSel = s.selected?.let { old -> merged.firstOrNull { it.hex == old.hex } ?: old }
             // Keep a selected aircraft on the map even if neither feed returned it this time.
@@ -375,7 +376,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (loaded == null || autoLoadNext) {
             loadArea(v)
         } else {
-            _state.update { it.copy(viewport = v, areaStale = movedAway(loaded, v)) }
+            val stale = movedAway(loaded, v)
+            _state.update {
+                it.copy(
+                    viewport = v,
+                    areaStale = stale,
+                    areaStaleSince = if (stale) it.areaStaleSince ?: System.currentTimeMillis() else null,
+                )
+            }
         }
     }
 
@@ -392,7 +400,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             trails.clear()
             lastMain = emptyList()
         }
-        _state.update { it.copy(viewport = v, areaStale = false) }
+        _state.update { it.copy(viewport = v, areaStale = false, areaStaleSince = null) }
         restartPolling(immediate = true)
         // OpenSky credits are scarce: re-query only if the new area isn't covered by the last
         // query and we haven't just fetched.
@@ -436,11 +444,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---- controls ----
-
-    fun setHideGround(h: Boolean) {
-        _state.update { it.copy(hideGround = h) }
-        publish()
-    }
 
     fun setOpenSkyEnabled(on: Boolean) = viewModelScope.launch {
         settings.setOpenSkyEnabled(on)

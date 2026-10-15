@@ -202,7 +202,7 @@ private fun Tag(text: String, color: Color) {
     )
 }
 
-private fun Aircraft.inside(v: Viewport): Boolean {
+internal fun Aircraft.inside(v: Viewport): Boolean {
     val la = lat ?: return false
     val lo = lon ?: return false
     if (la !in v.south..v.north) return false

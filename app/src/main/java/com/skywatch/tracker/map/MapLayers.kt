@@ -6,9 +6,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import com.skywatch.tracker.data.Aircraft
+import com.skywatch.tracker.data.Airport
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.RouteInfo
-import com.skywatch.tracker.ui.LatLon
+import com.skywatch.tracker.data.LatLon
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.eq
 import org.maplibre.android.style.expressions.Expression.get
@@ -32,6 +33,8 @@ import org.maplibre.android.style.layers.PropertyFactory.iconRotationAlignment
 import org.maplibre.android.style.layers.PropertyFactory.iconSize
 import org.maplibre.android.style.layers.PropertyFactory.lineCap
 import org.maplibre.android.style.layers.PropertyFactory.lineColor
+import org.maplibre.android.style.layers.PropertyFactory.lineDasharray
+import org.maplibre.android.style.layers.PropertyFactory.lineOpacity
 import org.maplibre.android.style.layers.PropertyFactory.lineJoin
 import org.maplibre.android.style.layers.PropertyFactory.lineWidth
 import org.maplibre.android.style.layers.PropertyFactory.rasterOpacity
@@ -55,6 +58,12 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import kotlin.math.asin
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** Owns every SkyWatch source/layer on top of the base map style. */
 class MapLayers(private val style: Style) {
@@ -62,6 +71,8 @@ class MapLayers(private val style: Style) {
     private val aircraftSource = GeoJsonSource(SRC_AIRCRAFT)
     private val trailSource = GeoJsonSource(SRC_TRAIL)
     private val metarSource = GeoJsonSource(SRC_METAR)
+    private val routeSource = GeoJsonSource(SRC_ROUTE)
+    private val airportSource = GeoJsonSource(SRC_AIRPORTS)
     private var radarUrl: String? = null
 
     init {
@@ -69,6 +80,8 @@ class MapLayers(private val style: Style) {
         style.addImage(ICON_HELI, heliBitmap(), true)
 
         style.addSource(trailSource)
+        style.addSource(routeSource)
+        style.addSource(airportSource)
         style.addSource(metarSource)
         style.addSource(aircraftSource)
 
@@ -78,6 +91,38 @@ class MapLayers(private val style: Style) {
                 lineWidth(3f),
                 lineCap(Property.LINE_CAP_ROUND),
                 lineJoin(Property.LINE_JOIN_ROUND),
+            ),
+        )
+
+        // Remaining route: dashed great circle from the aircraft to its destination.
+        style.addLayerBelow(
+            LineLayer(LAYER_ROUTE, SRC_ROUTE).withProperties(
+                lineColor("#FFFFFF"),
+                lineOpacity(0.85f),
+                lineWidth(2f),
+                lineDasharray(arrayOf(2f, 2f)),
+            ),
+            LAYER_TRAIL,
+        )
+        style.addLayer(
+            CircleLayer(LAYER_AIRPORTS, SRC_AIRPORTS).withProperties(
+                circleRadius(5f),
+                circleColor("#FFFFFF"),
+                circleStrokeColor("#212121"),
+                circleStrokeWidth(2f),
+            ),
+        )
+        style.addLayer(
+            SymbolLayer(LAYER_AIRPORT_LABELS, SRC_AIRPORTS).withProperties(
+                textField(get("code")),
+                textFont(FONT),
+                textSize(13f),
+                textOffset(arrayOf(0f, -1.2f)),
+                textAnchor(Property.TEXT_ANCHOR_BOTTOM),
+                textColor("#FFFFFF"),
+                textHaloColor("#CC000000"),
+                textHaloWidth(1.5f),
+                textAllowOverlap(true),
             ),
         )
 
@@ -189,6 +234,27 @@ class MapLayers(private val style: Style) {
         trailSource.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
+    /** Dashed line to the destination plus origin/destination markers; nulls clear it. */
+    fun setRoute(position: LatLon?, origin: Airport?, destination: Airport?) {
+        val dLat = destination?.latitude
+        val dLon = destination?.longitude
+        val line = if (position != null && dLat != null && dLon != null) {
+            listOf(
+                Feature.fromGeometry(
+                    LineString.fromLngLats(greatCircle(position.lat, position.lon, dLat, dLon)),
+                ),
+            )
+        } else emptyList()
+        routeSource.setGeoJson(FeatureCollection.fromFeatures(line))
+
+        val airports = listOfNotNull(origin, destination).mapNotNull { a ->
+            val la = a.latitude ?: return@mapNotNull null
+            val lo = a.longitude ?: return@mapNotNull null
+            Feature.fromGeometry(Point.fromLngLat(lo, la)).apply { addStringProperty("code", a.code) }
+        }
+        airportSource.setGeoJson(FeatureCollection.fromFeatures(airports))
+    }
+
     fun setMetars(list: List<Metar>) {
         val features = list.map { m ->
             Feature.fromGeometry(Point.fromLngLat(m.lon, m.lat)).apply {
@@ -211,6 +277,29 @@ class MapLayers(private val style: Style) {
         style.addLayerBelow(RasterLayer(LAYER_RADAR, SRC_RADAR).withProperties(rasterOpacity(0.6f)), LAYER_TRAIL)
     }
 
+    /** Points along the great circle, with longitudes kept continuous across ±180°. */
+    private fun greatCircle(lat1: Double, lon1: Double, lat2: Double, lon2: Double, n: Int = 64): List<Point> {
+        val φ1 = Math.toRadians(lat1); val λ1 = Math.toRadians(lon1)
+        val φ2 = Math.toRadians(lat2); val λ2 = Math.toRadians(lon2)
+        val d = 2 * asin(sqrt(sin((φ2 - φ1) / 2).pow(2) + cos(φ1) * cos(φ2) * sin((λ2 - λ1) / 2).pow(2)))
+        if (d < 1e-9) return listOf(Point.fromLngLat(lon1, lat1), Point.fromLngLat(lon2, lat2))
+        var prevLon = lon1
+        return (0..n).map { i ->
+            val f = i.toDouble() / n
+            val a = sin((1 - f) * d) / sin(d)
+            val b = sin(f * d) / sin(d)
+            val x = a * cos(φ1) * cos(λ1) + b * cos(φ2) * cos(λ2)
+            val y = a * cos(φ1) * sin(λ1) + b * cos(φ2) * sin(λ2)
+            val z = a * sin(φ1) + b * sin(φ2)
+            val lat = Math.toDegrees(atan2(z, sqrt(x * x + y * y)))
+            var lon = Math.toDegrees(atan2(y, x))
+            while (lon - prevLon > 180) lon -= 360
+            while (lon - prevLon < -180) lon += 360
+            prevLon = lon
+            Point.fromLngLat(lon, lat)
+        }
+    }
+
     private fun altitudeColor(): Expression = Expression.interpolate(
         Expression.linear(), get("alt"),
         Expression.stop(0, Expression.color(Color.parseColor("#FF6D00"))),
@@ -228,6 +317,11 @@ class MapLayers(private val style: Style) {
         private const val LAYER_METAR_LABEL = "sw-metar-label"
         private const val LAYER_TRAIL = "sw-trail"
         private const val LAYER_RADAR = "sw-radar"
+        private const val LAYER_ROUTE = "sw-route"
+        private const val LAYER_AIRPORTS = "sw-airports"
+        private const val LAYER_AIRPORT_LABELS = "sw-airport-labels"
+        private const val SRC_ROUTE = "sw-route"
+        private const val SRC_AIRPORTS = "sw-airports"
         private const val SRC_AIRCRAFT = "sw-aircraft"
         private const val SRC_TRAIL = "sw-trail"
         private const val SRC_METAR = "sw-metar"

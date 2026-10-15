@@ -13,7 +13,9 @@ An open-source Android flight tracker built only on free, public data. Military 
   (when the aircraft sends them), MLAT / PIA / LADD flags, registration, type, owner and country.
 - **Route** (origin → destination) looked up by callsign.
 - **Aircraft photo** with photographer credit.
-- **Flight trail** for the selected aircraft, coloured by altitude. It is built from positions seen since the app opened.
+- **Flight path** for the selected aircraft: the track flown since takeoff (adsb.lol trace history, OpenSky
+  fallback), coloured by altitude and extended live, plus a dashed great-circle line to the destination with
+  origin/destination markers when the route is known.
 - **Search** by callsign, registration or ICAO hex, anywhere in the world.
 - **Weather**: RainViewer radar overlay, plus METAR stations coloured by flight category (VFR/MVFR/IFR/LIFR). Tap a station for the raw METAR.
 - **Watchlist alerts**: get a notification when a registration, callsign, hex or military callsign prefix
@@ -48,5 +50,6 @@ Requires JDK 17+ and the Android SDK (platform 35).
 
 ## Limits
 - Only aircraft that transmit ADS-B/Mode S (and are in range of a volunteer receiver) appear.
-- Trail history starts when you open the app. Long-term history isn't included yet; see the adsb.lol daily archives if you want to add it.
+- The flown path uses adsb.lol's trace files (the data behind its web map), which aren't a documented API
+  and could change; OpenSky is the fallback.
 - Some countries restrict publishing military movements. Check before distributing the app publicly.

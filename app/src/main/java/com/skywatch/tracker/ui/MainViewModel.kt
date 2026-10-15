@@ -9,6 +9,8 @@ import com.skywatch.tracker.data.BoundingBox
 import com.skywatch.tracker.data.OpenSky
 import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
+import com.skywatch.tracker.data.LatLon
+import com.skywatch.tracker.data.Trace
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.RateLimitedException
 import com.skywatch.tracker.data.RouteInfo
@@ -33,8 +35,6 @@ data class Viewport(
     val lat: Double, val lon: Double, val radiusNm: Int,
     val south: Double, val west: Double, val north: Double, val east: Double,
 )
-
-data class LatLon(val lat: Double, val lon: Double, val alt: Int?)
 
 /** A one-off request for the map to move. [zoom] null keeps the current zoom (but at least 8). */
 data class CameraMove(val lat: Double, val lon: Double, val zoom: Double?, val id: Int)
@@ -85,6 +85,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var autoLoadNext = true
     private val trails = HashMap<String, ArrayDeque<LatLon>>()
     private var enrichJob: Job? = null
+    private var traceJob: Job? = null
+    /** Flown path of the selected aircraft's current flight, from the trace history. */
+    private var selectedHistory: List<LatLon> = emptyList()
     private var pollJob: Job? = null
     private var active = false
     private var lastPollAt = 0L
@@ -205,7 +208,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             s.copy(
                 aircraft = shown,
                 selected = newSel,
-                selectedTrail = newSel?.let { a -> trails[a.hex]?.toList() }.orEmpty(),
+                selectedTrail = newSel?.let { a -> fullPath(a.hex) }.orEmpty(),
                 openSkyAdded = extra.size,
             )
         }
@@ -400,9 +403,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settings.setOpenSkyCredentials(id, secret)
     }
 
+    /** History from the trace API followed by positions we've received live since. */
+    private fun fullPath(hex: String): List<LatLon> = selectedHistory + trails[hex]?.toList().orEmpty()
+
     fun select(hex: String?) {
         enrichJob?.cancel()
         if (hex == null) {
+            traceJob?.cancel()
+            selectedHistory = emptyList()
             _state.update { it.copy(selected = null, enrichment = null, selectedTrail = emptyList()) }
             return
         }
@@ -419,12 +427,24 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selectAircraft(ac: Aircraft, moveCamera: Boolean) {
         enrichJob?.cancel()
+        if (_state.value.selected?.hex != ac.hex) {
+            traceJob?.cancel()
+            selectedHistory = emptyList()
+            traceJob = viewModelScope.launch {
+                val path = Trace.currentFlight(ac.hex, openSkyCredentials.value)
+                if (_state.value.selected?.hex != ac.hex) return@launch
+                selectedHistory = path
+                // Live points start fresh from here so they don't duplicate the history.
+                trails[ac.hex]?.clear()
+                _state.update { it.copy(selectedTrail = fullPath(ac.hex)) }
+            }
+        }
         _state.update {
             it.copy(
                 selected = ac,
                 enrichment = null,
                 selectedMetar = null,
-                selectedTrail = trails[ac.hex]?.toList().orEmpty(),
+                selectedTrail = fullPath(ac.hex),
             )
         }
         if (moveCamera) moveCamera(ac.lat!!, ac.lon!!, null)

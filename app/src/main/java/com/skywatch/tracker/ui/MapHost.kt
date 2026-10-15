@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.skywatch.tracker.data.LatLon
 import com.skywatch.tracker.map.MapLayers
 import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
@@ -127,6 +128,13 @@ fun MapHost(
             l.setAircraft(state.aircraft, state.selected?.hex, state.routes)
         }
         LaunchedEffect(l, state.selectedTrail) { l.setTrail(state.selectedTrail) }
+        // Remaining route for the selected aircraft (only while airborne).
+        val sel = state.selected
+        val route = sel?.callsign?.let { state.routes[it]?.route } ?: state.enrichment?.route
+        LaunchedEffect(l, sel?.lat, sel?.lon, route) {
+            val pos = sel?.takeIf { !it.onGround && it.hasPosition }?.let { LatLon(it.lat!!, it.lon!!, it.altitude) }
+            if (sel == null) l.setRoute(null, null, null) else l.setRoute(pos, route?.origin, route?.destination)
+        }
         LaunchedEffect(l, state.metars, state.showMetars) { l.setMetars(if (state.showMetars) state.metars else emptyList()) }
         LaunchedEffect(l, state.showRadar, state.radarTiles) { l.setRadar(if (state.showRadar) state.radarTiles else null) }
     }

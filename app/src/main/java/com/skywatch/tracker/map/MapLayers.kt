@@ -26,6 +26,9 @@ import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
 import org.maplibre.android.style.layers.PropertyFactory.iconAnchor
 import org.maplibre.android.style.layers.PropertyFactory.iconOffset
 import org.maplibre.android.style.layers.PropertyFactory.iconOptional
+import org.maplibre.android.style.layers.PropertyFactory.iconOpacity
+import org.maplibre.android.style.layers.PropertyFactory.iconTranslate
+import org.maplibre.android.style.layers.PropertyFactory.iconTranslateAnchor
 import org.maplibre.android.style.layers.PropertyFactory.iconColor
 import org.maplibre.android.style.layers.PropertyFactory.iconHaloBlur
 import org.maplibre.android.style.layers.PropertyFactory.iconHaloColor
@@ -83,8 +86,9 @@ class MapLayers(private val style: Style) {
     private val logoImages = HashSet<String>()
 
     init {
-        style.addImage(ICON_PLANE, planeBitmap(), true)
-        style.addImage(ICON_HELI, heliBitmap(), true)
+        // Real signed-distance-field icons, so outlines (halo) and soft shadows render cleanly.
+        style.addImage(ICON_PLANE, toSdf(planeBitmap()), true)
+        style.addImage(ICON_HELI, toSdf(heliBitmap()), true)
 
         // Bundled OurAirports data (public domain), loaded natively from the APK.
         style.addSource(GeoJsonSource(SRC_APT, URI("asset://airports.geojson")))
@@ -166,6 +170,24 @@ class MapLayers(private val style: Style) {
             ).also { it.minZoom = 6f },
         )
 
+        // Soft drop shadow: the same icon in black, blurred and nudged down-right on screen.
+        style.addLayer(
+            SymbolLayer(LAYER_AIRCRAFT_SHADOW, SRC_AIRCRAFT).withProperties(
+                iconImage(get("icon")),
+                iconRotate(get("track")),
+                iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
+                iconAllowOverlap(true),
+                iconIgnorePlacement(true),
+                iconSize(aircraftSize()),
+                iconColor("#000000"),
+                iconOpacity(0.45f),
+                iconHaloColor("#000000"),
+                iconHaloWidth(2.5f),
+                iconHaloBlur(3f),
+                iconTranslate(arrayOf(1.5f, 2.5f)),
+                iconTranslateAnchor(Property.ICON_TRANSLATE_ANCHOR_VIEWPORT),
+            ),
+        )
         style.addLayer(
             SymbolLayer(LAYER_AIRCRAFT, SRC_AIRCRAFT).withProperties(
                 iconImage(get("icon")),
@@ -173,15 +195,7 @@ class MapLayers(private val style: Style) {
                 iconRotationAlignment(Property.ICON_ROTATION_ALIGNMENT_MAP),
                 iconAllowOverlap(true),
                 iconIgnorePlacement(true),
-                iconSize(
-                    Expression.switchCase(
-                        eq(get("sel"), literal(true)), literal(0.75f),
-                        Expression.interpolate(
-                            Expression.linear(), Expression.zoom(),
-                            Expression.stop(3, 0.35f), Expression.stop(10, 0.6f),
-                        ),
-                    ),
-                ),
+                iconSize(aircraftSize()),
                 iconColor(
                     Expression.switchCase(
                         eq(get("emerg"), literal(true)), Expression.color(Color.parseColor("#FF1744")),
@@ -190,14 +204,15 @@ class MapLayers(private val style: Style) {
                         Expression.color(Color.parseColor("#FFC400")),
                     ),
                 ),
+                // Crisp dark outline; cyan for the selected aircraft.
                 iconHaloColor(
                     Expression.switchCase(
                         eq(get("sel"), literal(true)), Expression.color(Color.parseColor("#00E5FF")),
-                        Expression.color(Color.parseColor("#B3000000")),
+                        Expression.color(Color.parseColor("#E6111111")),
                     ),
                 ),
-                iconHaloWidth(Expression.switchCase(eq(get("sel"), literal(true)), literal(3f), literal(1.2f))),
-                iconHaloBlur(0.5f),
+                iconHaloWidth(Expression.switchCase(eq(get("sel"), literal(true)), literal(3f), literal(1.6f))),
+                iconHaloBlur(0.2f),
             ),
         )
         // Airline logo card above the aircraft, only for features that have a loaded logo.
@@ -322,6 +337,14 @@ class MapLayers(private val style: Style) {
         )
     }
 
+    private fun aircraftSize(): Expression = Expression.switchCase(
+        eq(get("sel"), literal(true)), literal(0.75f),
+        Expression.interpolate(
+            Expression.linear(), Expression.zoom(),
+            Expression.stop(3, 0.35f), Expression.stop(10, 0.6f),
+        ),
+    )
+
     /** Registers the logo card with the style the first time it's needed. */
     private fun ensureLogo(iata: String): Boolean {
         if (iata in logoImages) return true
@@ -427,11 +450,57 @@ class MapLayers(private val style: Style) {
         private const val SRC_TRAIL = "sw-trail"
         private const val SRC_METAR = "sw-metar"
         private const val SRC_RADAR = "sw-radar"
+        private const val LAYER_AIRCRAFT_SHADOW = "sw-aircraft-shadow"
         private const val ICON_PLANE = "sw-plane"
         private const val ICON_HELI = "sw-heli"
         private val FONT = arrayOf("Noto Sans Regular")
 
-        /** White, nose-up airliner silhouette used as an SDF so it can be tinted. */
+        private const val SDF_RADIUS = 8
+
+        /**
+         * Converts a white-on-transparent silhouette into a signed distance field in the format
+         * MapLibre expects (edge at alpha 0.75, falling off over [SDF_RADIUS] px), padding the
+         * image so there's room for the outline and shadow.
+         */
+        private fun toSdf(src: Bitmap): Bitmap {
+            val pad = SDF_RADIUS
+            val w = src.width + pad * 2
+            val h = src.height + pad * 2
+            val inf = 1e20f
+            // Tiny-SDF style: antialiased coverage gives sub-pixel edge positions as squared offsets.
+            val gOuter = FloatArray(w * h) { inf }
+            val gInner = FloatArray(w * h) { 0f }
+            for (y in 0 until src.height) for (x in 0 until src.width) {
+                val a = Color.alpha(src.getPixel(x, y)) / 255f
+                val i = (y + pad) * w + x + pad
+                gOuter[i] = when { a >= 1f -> 0f; a <= 0f -> inf; else -> (0.5f - a).coerceAtLeast(0f).let { it * it } }
+                gInner[i] = when { a >= 1f -> inf; a <= 0f -> 0f; else -> (a - 0.5f).coerceAtLeast(0f).let { it * it } }
+            }
+            val cap = (SDF_RADIUS * 2f).let { it * it }
+            val out = IntArray(w * h)
+            for (y in 0 until h) for (x in 0 until w) {
+                var bo = inf
+                var bi = inf
+                for (dy in -SDF_RADIUS..SDF_RADIUS) {
+                    val yy = y + dy
+                    if (yy !in 0 until h) continue
+                    for (dx in -SDF_RADIUS..SDF_RADIUS) {
+                        val xx = x + dx
+                        if (xx !in 0 until w) continue
+                        val d2 = (dx * dx + dy * dy).toFloat()
+                        val j = yy * w + xx
+                        if (d2 + gOuter[j] < bo) bo = d2 + gOuter[j]
+                        if (d2 + gInner[j] < bi) bi = d2 + gInner[j]
+                    }
+                }
+                val signed = kotlin.math.sqrt(minOf(bo, cap)) - kotlin.math.sqrt(minOf(bi, cap))
+                val a = (1f - (signed / SDF_RADIUS + 0.25f)).coerceIn(0f, 1f)
+                out[y * w + x] = Color.argb((a * 255).toInt(), 255, 255, 255)
+            }
+            return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+        }
+
+        /** White, nose-up airliner silhouette (converted to an SDF so it can be tinted). */
         private fun planeBitmap(): Bitmap {
             val s = 64f
             val bmp = Bitmap.createBitmap(s.toInt(), s.toInt(), Bitmap.Config.ARGB_8888)

@@ -115,9 +115,6 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 FilledIconToggleButton(checked = showSearch, onCheckedChange = { showSearch = it }) {
                     Icon(Icons.Default.Search, "Search")
                 }
-                FilledIconToggleButton(checked = showList, onCheckedChange = { showList = it }) {
-                    Icon(Icons.AutoMirrored.Filled.List, "Aircraft list")
-                }
                 FilledIconToggleButton(checked = state.showRadar, onCheckedChange = { vm.toggleRadar() }) {
                     Icon(Icons.Default.Cloud, "Weather radar")
                 }
@@ -158,7 +155,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp).padding(bottom = 8.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                StatusPill(state, Modifier.weight(1f, fill = false))
+                StatusPill(state, onClick = { showList = true }, modifier = Modifier.weight(1f, fill = false))
                 Spacer(Modifier.weight(1f))
                 SmallFloatingActionButton(
                     onClick = vm::refreshArea,
@@ -287,12 +284,15 @@ private fun SearchBar(onClose: () -> Unit, onSearch: (String, (Boolean) -> Unit)
     }
 }
 
-/** Bottom-left: aircraft icon + how many aircraft are in view; a spinner while loading, ⚠ on errors. */
+/** Bottom-left: list button with the number of aircraft in view; a spinner while loading, ⚠ on errors. */
 @Composable
-private fun StatusPill(state: UiState, modifier: Modifier) {
+private fun StatusPill(state: UiState, onClick: () -> Unit, modifier: Modifier) {
     val inView = state.viewport?.let { v -> state.aircraft.count { it.inside(v) } } ?: state.aircraft.size
-    Surface(modifier, shape = RoundedCornerShape(16.dp), color = Color(0xCC000000)) {
+    // Tap to open the aircraft list.
+    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(16.dp), color = Color(0xCC000000)) {
         Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Aircraft list", tint = Color.White, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
             Icon(Icons.Default.Flight, contentDescription = "Aircraft in view", tint = Color.White, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("$inView", color = Color.White, style = MaterialTheme.typography.labelLarge)

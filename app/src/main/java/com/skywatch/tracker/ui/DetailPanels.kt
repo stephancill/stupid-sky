@@ -1,6 +1,15 @@
 package com.skywatch.tracker.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +51,8 @@ fun AircraftPanel(
     ac: Aircraft,
     enrichment: Enrichment?,
     routeInfo: RouteInfo?,
+    collapsed: Boolean,
+    onCollapsedChange: (Boolean) -> Unit,
     onClose: () -> Unit,
     onWatch: () -> Unit,
     modifier: Modifier = Modifier,
@@ -51,15 +62,42 @@ fun AircraftPanel(
     val route = enrichment?.route ?: routeInfo?.route
     val info = enrichment?.info
     val photo = enrichment?.photo
+    val airline = route?.airline?.name ?: routeInfo?.airlineName ?: info?.owner
 
-    Card(modifier, shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+    // Swipe the header down to collapse, up to expand; tap toggles.
+    val dragToggle = Modifier.pointerInput(collapsed) {
+        var total = 0f
+        detectVerticalDragGestures(
+            onDragStart = { total = 0f },
+            onVerticalDrag = { change, dy -> change.consume(); total += dy },
+            onDragEnd = {
+                if (total > 40f && !collapsed) onCollapsedChange(true)
+                if (total < -40f && collapsed) onCollapsedChange(false)
+            },
+        )
+    }
+
+    Card(modifier.animateContentSize(), shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
+        Box(
+            Modifier.fillMaxWidth().then(dragToggle).clickable { onCollapsedChange(!collapsed) }.padding(top = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier.size(width = 36.dp, height = 4.dp)
+                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(2.dp)),
+            )
+        }
+        if (collapsed) {
+            CollapsedHeader(ac, airline, route, onExpand = { onCollapsedChange(false) }, onClose = onClose, modifier = dragToggle)
+            return@Card
+        }
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = dragToggle) {
                 Column(Modifier.weight(1f)) {
                     Text(ac.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    val airline = route?.airline?.name ?: routeInfo?.airlineName ?: info?.owner
                     if (airline != null) Text(airline, style = MaterialTheme.typography.bodyMedium)
                 }
+                IconButton(onClick = { onCollapsedChange(true) }) { Icon(Icons.Default.KeyboardArrowDown, "Minimise") }
                 IconButton(onClick = onWatch) { Icon(Icons.Default.NotificationsActive, "Alert me") }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
             }
@@ -134,6 +172,50 @@ fun AircraftPanel(
                 ),
             )
         }
+    }
+}
+
+/** One-line summary shown when the panel is minimised, so the map and flight path stay visible. */
+@Composable
+private fun CollapsedHeader(
+    ac: Aircraft,
+    airline: String?,
+    route: com.skywatch.tracker.data.FlightRoute?,
+    onExpand: () -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier,
+) {
+    Row(
+        modifier.fillMaxWidth().clickable(onClick = onExpand).padding(start = 16.dp, end = 4.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(ac.label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val o = route?.origin
+                val d = route?.destination
+                if (o != null && d != null) {
+                    Text(
+                        "  ${o.code} → ${d.code}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            Text(
+                listOfNotNull(
+                    airline,
+                    if (ac.onGround) "Ground" else ac.altitude?.let(Units::altitude),
+                    ac.gs?.let(Units::speed),
+                ).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onExpand) { Icon(Icons.Default.KeyboardArrowUp, "Expand") }
+        IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
     }
 }
 

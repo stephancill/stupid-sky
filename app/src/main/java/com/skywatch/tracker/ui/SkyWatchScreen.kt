@@ -55,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,6 +84,9 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
     var watchPrefill by remember { mutableStateOf<WatchEntry?>(null) }
     var showWatchDialog by rememberSaveable { mutableStateOf(false) }
     var showList by rememberSaveable { mutableStateOf(false) }
+    var detailCollapsed by rememberSaveable { mutableStateOf(false) }
+    // Each newly selected aircraft opens expanded.
+    LaunchedEffect(state.selected?.hex) { detailCollapsed = false }
 
     Box(Modifier.fillMaxSize()) {
         MapHost(
@@ -147,6 +151,11 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                     ac = sel,
                     enrichment = state.enrichment,
                     routeInfo = sel.callsign?.let { state.routes[it] },
+                    collapsed = detailCollapsed,
+                    onCollapsedChange = { c ->
+                        detailCollapsed = c
+                        if (c) vm.fitSelectedPath()
+                    },
                     onClose = { vm.select(null) },
                     onWatch = {
                         watchPrefill = when {

@@ -38,7 +38,14 @@ data class Viewport(
 )
 
 /** A one-off request for the map to move. [zoom] null keeps the current zoom (but at least 8). */
-data class CameraMove(val lat: Double, val lon: Double, val zoom: Double?, val id: Int)
+data class CameraMove(
+    val lat: Double,
+    val lon: Double,
+    val zoom: Double?,
+    val id: Int,
+    /** When set, fit these bounds instead of centring on lat/lon. */
+    val fit: BoundingBox? = null,
+)
 
 data class UiState(
     val aircraft: List<Aircraft> = emptyList(),
@@ -454,6 +461,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val ac = _state.value.aircraft.firstOrNull { it.hex == hex } ?: return
         selectAircraft(ac, moveCamera = false)
+    }
+
+    /**
+     * Zoom the map to show the selected aircraft's flown path and its destination.
+     * Doesn't reload the area (the selected aircraft keeps updating regardless).
+     */
+    fun fitSelectedPath() {
+        val s = _state.value
+        val sel = s.selected ?: return
+        val dest = sel.callsign?.let { s.routes[it]?.destination } ?: s.enrichment?.route?.destination
+        val pts = s.selectedTrail.map { it.lat to it.lon } +
+            listOfNotNull(sel.lat?.let { la -> sel.lon?.let { lo -> la to lo } }) +
+            listOfNotNull(dest?.latitude?.let { la -> dest.longitude?.let { lo -> la to lo } })
+        if (pts.isEmpty()) return
+        // Pad a little so a single point (or a parked aircraft) still gives a valid, sensible view.
+        val m = 0.02
+        val box = BoundingBox(
+            south = pts.minOf { it.first } - m, west = pts.minOf { it.second } - m,
+            north = pts.maxOf { it.first } + m, east = pts.maxOf { it.second } + m,
+        )
+        _state.update { it.copy(camera = CameraMove(sel.lat!!, sel.lon!!, null, ++cameraId, fit = box)) }
     }
 
     /** From the list view: select and centre on the aircraft without reloading the area. */

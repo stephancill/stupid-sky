@@ -23,6 +23,7 @@ import org.maplibre.android.MapLibre
 import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.geometry.LatLngBounds
 import org.maplibre.android.location.LocationComponentActivationOptions
 import org.maplibre.android.location.modes.CameraMode
 import org.maplibre.android.location.modes.RenderMode
@@ -141,8 +142,20 @@ fun MapHost(
     LaunchedEffect(map, state.camera?.id) {
         val m = map ?: return@LaunchedEffect
         val c = state.camera ?: return@LaunchedEffect
-        val zoom = c.zoom ?: maxOf(m.cameraPosition.zoom, 8.0)
-        m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(c.lat, c.lon), zoom), 1200)
+        val fit = c.fit
+        if (fit != null) {
+            val d = context.resources.displayMetrics.density
+            val bounds = LatLngBounds.Builder()
+                .include(LatLng(fit.north, fit.east))
+                .include(LatLng(fit.south, fit.west))
+                .build()
+            // Leave room for the search bar on top and the minimised panel at the bottom.
+            val pad = intArrayOf((40 * d).toInt(), (190 * d).toInt(), (40 * d).toInt(), (190 * d).toInt())
+            m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, pad[0], pad[1], pad[2], pad[3]), 1200)
+        } else {
+            val zoom = c.zoom ?: maxOf(m.cameraPosition.zoom, 8.0)
+            m.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(c.lat, c.lon), zoom), 1200)
+        }
     }
     // Blue "you are here" dot.
     LaunchedEffect(map, style, state.locationGranted) {

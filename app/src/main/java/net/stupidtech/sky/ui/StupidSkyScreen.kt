@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Flight
+import androidx.compose.material.icons.filled.LocalAirport
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Settings
@@ -63,6 +65,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextOverflow
+import net.stupidtech.sky.data.AirportInfo
+import net.stupidtech.sky.data.Place
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
@@ -133,9 +139,14 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
                 }
             }
             AnimatedVisibility(visible = showSearch) {
+                val suggestions by vm.suggestions.collectAsStateWithLifecycle()
                 SearchBar(
-                    onClose = { showSearch = false },
-                    onSearch = { q, done -> vm.search(q) { found -> done(found); if (found) showSearch = false } },
+                    suggestions = suggestions,
+                    onQueryChange = vm::onSearchQuery,
+                    onClose = { vm.clearSuggestions(); showSearch = false },
+                    onSearch = { q, done -> vm.submitSearch(q) { found -> done(found); if (found) showSearch = false } },
+                    onPickAirport = { vm.pickAirport(it); showSearch = false },
+                    onPickPlace = { vm.pickPlace(it); showSearch = false },
                 )
             }
             // Panning never triggers a request on its own; offer an explicit refresh instead.
@@ -144,14 +155,25 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
                 while (true) { delay(15_000); value = System.currentTimeMillis() }
             }
             val staleLong = state.areaStaleSince?.let { now - it >= STALE_BANNER_MS } == true
+            // A zoomed-out view is a one-off snapshot, so the prompt shows as soon as it has loaded.
+            val wide = state.wideSnapshot && !state.loading
             AnimatedVisibility(
-                visible = state.areaStale && staleLong,
+                visible = (state.areaStale && staleLong) || wide,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             ) {
                 ExtendedFloatingActionButton(
                     onClick = vm::refreshArea,
                     icon = { Icon(Icons.Default.Refresh, null) },
-                    text = { Text("Refresh this area") },
+                    text = {
+                        Text(
+                            when {
+                                state.areaStale -> "Refresh this area"
+                                state.wideCropped -> "Not live, centre only · Refresh"
+                                wide -> "Not live when zoomed out · Refresh"
+                                else -> "Refresh this area"
+                            },
+                        )
+                    },
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
                 )
@@ -296,36 +318,110 @@ fun StupidSkyScreen(vm: MainViewModel, requestNotifications: () -> Unit, request
 }
 
 @Composable
-private fun SearchBar(onClose: () -> Unit, onSearch: (String, (Boolean) -> Unit) -> Unit) {
+private fun SearchBar(
+    suggestions: SearchSuggestions,
+    onQueryChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onSearch: (String, (Boolean) -> Unit) -> Unit,
+    onPickAirport: (AirportInfo) -> Unit,
+    onPickPlace: (Place) -> Unit,
+) {
     var query by rememberSaveable { mutableStateOf("") }
     var notFound by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     // Open the keyboard straight away when the search bar appears.
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, tonalElevation = 2.dp) {
-        TextField(
-            value = query,
-            onValueChange = { query = it; notFound = false },
-            placeholder = { Text(if (notFound) "Not found / not airborne" else "Callsign, registration or hex") },
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            trailingIcon = {
-                IconButton(onClick = { focus.clearFocus(); onClose() }) { Icon(Icons.Default.Close, "Close search") }
-            },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = {
-                focus.clearFocus()
-                onSearch(query) { found -> notFound = !found; if (!found) query = "" }
-            }),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
-            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-        )
+        Column {
+            TextField(
+                value = query,
+                onValueChange = { query = it; notFound = false; onQueryChange(it) },
+                placeholder = { Text(if (notFound) "Nothing found" else "Flight, airport or place") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                trailingIcon = {
+                    if (searching) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    else IconButton(onClick = { focus.clearFocus(); onClose() }) { Icon(Icons.Default.Close, "Close search") }
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    if (query.isBlank()) return@KeyboardActions
+                    focus.clearFocus()
+                    searching = true
+                    onSearch(query) { found ->
+                        searching = false
+                        notFound = !found
+                        if (!found) { query = ""; onQueryChange("") }
+                    }
+                }),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+            )
+            if (query.isNotBlank() && suggestions.query == query.trim()) {
+                SearchSuggestionList(suggestions, onPickAirport, onPickPlace)
+            }
+        }
+    }
+}
+
+/** Airports (bundled, instant) then places (Photon). Enter still finds aircraft. */
+@Composable
+private fun SearchSuggestionList(
+    s: SearchSuggestions,
+    onPickAirport: (AirportInfo) -> Unit,
+    onPickPlace: (Place) -> Unit,
+) {
+    LazyColumn(Modifier.heightIn(max = 360.dp).padding(bottom = 8.dp)) {
+        item {
+            SuggestionRow(Icons.Default.Flight, "Press search to find flight “${s.query}”", "Callsign, registration or hex", null)
+        }
+        items(s.airports, key = { "apt:${it.icao}" }) { a ->
+            SuggestionRow(
+                Icons.Default.LocalAirport,
+                listOfNotNull(a.iata, a.icao).distinct().joinToString(" · ") + "  " + a.name,
+                a.city,
+            ) { onPickAirport(a) }
+        }
+        val places = s.places
+        if (places == null) {
+            item { SuggestionRow(Icons.Default.Place, "Searching places…", null, null) }
+        } else {
+            items(places) { p ->
+                SuggestionRow(Icons.Default.Place, p.name, p.detail.ifBlank { null }) { onPickPlace(p) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionRow(icon: ImageVector, title: String, subtitle: String?, onClick: (() -> Unit)?) {
+    Row(
+        Modifier.fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(16.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            subtitle?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 
@@ -450,7 +546,7 @@ private fun SettingsContent(
         Text(
             "Positions: adsb.lol (ODbL) / adsb.fi open data / The OpenSky Network (opensky-network.org) · Routes & aircraft: adsbdb.com · " +
                 "Photos: Planespotters.net · Airline logos: pics.avs.io · Weather: NOAA aviationweather.gov, RainViewer · " +
-                "Airports: OurAirports · Airline codes: OpenFlights (ODbL) · Map: OpenFreeMap, © OpenStreetMap contributors",
+                "Airports: OurAirports · Airline codes: OpenFlights (ODbL) · Place search: Photon by komoot · Map: OpenFreeMap, © OpenStreetMap contributors",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

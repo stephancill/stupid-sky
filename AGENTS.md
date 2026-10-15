@@ -51,6 +51,8 @@ app/src/main/java/net/stupidtech/sky/
     Trace.kt        flown path: adsb.lol trace files (cut to current leg), OpenSky /tracks fallback
     Logos.kt        airline logo cards from pics.avs.io (runtime only, never bundled)
     Airlines.kt     callsign ICAO prefix → IATA code (bundled OpenFlights table) for logos
+    Airports.kt     search over the bundled airports.geojson (codes, names, cities)
+    Places.kt       place search via Photon (OSM geocoder)
     Models.kt       @Serializable API models, Aircraft, AirportInfo, Enrichment
     Settings.kt     DataStore prefs (watchlist, OpenSky creds, toggles)
     UserLocation.kt platform LocationManager (no GMS)
@@ -73,7 +75,9 @@ docs/implementation-notes.md   design decisions and their reasons (read first, k
 - **Loaded area vs viewport**: polling refreshes `loadedArea` every 10 s. Panning/zooming never triggers a
   request. When the view moves away, the small refresh button highlights; the big "Refresh this area" banner
   appears only after 5 minutes. App-driven camera moves (my location, search) set `autoLoadNext` and load
-  automatically. Polling pauses in `onStop` (`setActive(false)`).
+  automatically. Polling pauses in `onStop` (`setActive(false)`). A view wider than the networks' 250 nm
+  limit is loaded once as several circles (`Tiles.cover`, `FlightData.areas`) and not polled; the user refreshes
+  it. The camera is saved on every idle and restored at launch; only the first launch centres on the user.
 - **Sources merged automatically**: `FlightData.area()` queries adsb.lol and adsb.fi in parallel and merges
   by ICAO hex, keeping the freshest position (`seen_pos`) and filling gaps from the other report. A network
   that returns 429 gets its own cooldown; the call only fails if every network failed.
@@ -89,7 +93,7 @@ docs/implementation-notes.md   design decisions and their reasons (read first, k
 ## Data sources and etiquette (important)
 
 All requests go through `FlightData.fetch`/`fetchBytes`, which apply the per-host throttle
-(`FlightData.Throttle`: adsb.fi 1.1 s, adsb.lol 1 s, adsbdb/planespotters 0.5 s, avs.io 0.15 s).
+(`FlightData.Throttle`: adsb.fi 1.1 s, adsb.lol 1 s, adsbdb/planespotters 0.5 s, avs.io 0.15 s, komoot.io 1 s).
 **Never bypass it** and never add tighter polling.
 
 | Data | Source | Notes |
@@ -100,6 +104,7 @@ All requests go through `FlightData.fetch`/`fetchBytes`, which apply the per-hos
 | Routes, registry, airlines | `api.adsbdb.com/v0` | 404 for unknown callsign; unknown airline returns a plain string |
 | Photos | `api.planespotters.net/pub/photos` | **requires descriptive User-Agent** + photographer attribution in UI |
 | Logos | `pics.avs.io/{w}/{h}/{IATA}.png` | undocumented; 404 if unknown; runtime only, never commit logo files |
+| Place search | `photon.komoot.io/api` | fair use; debounced while typing, 1 s throttle; Nominatim forbids autocomplete |
 | METAR | `aviationweather.gov/api/data/metar` | bbox queries rejected when huge |
 | Radar | RainViewer `weather-maps.json` tiles | free tiles max zoom 7 |
 | Airports | OurAirports (public domain), bundled | regenerate with `tools/build_airports.py` |

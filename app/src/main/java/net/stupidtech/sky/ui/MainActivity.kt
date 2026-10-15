@@ -33,8 +33,9 @@ class MainActivity : ComponentActivity() {
         AlertWorker.schedule(this)
         val fromAlert = intent?.getStringExtra(EXTRA_HEX) != null
         handleIntent(intent)
-        // Centre on the user at launch (unless we were opened to show a specific aircraft).
-        if (savedInstanceState == null && !fromAlert) {
+        // Reopen where the user left the map; centre on them only on first launch (or when opened to show
+        // a specific aircraft, the alert decides).
+        if (savedInstanceState == null && !fromAlert && !hasSavedCamera(this)) {
             if (UserLocation.hasPermission(this)) {
                 vm.locateUser()
             } else {

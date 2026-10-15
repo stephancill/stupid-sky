@@ -19,8 +19,10 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Airports on the map** as pins from bundled OurAirports data (~11,600 airports): large from zoom 4, medium from 7,
   small coded airfields from 9; military fields in green. Tap one for its METAR and a live mini-board of
   arriving / departed flights and aircraft on the ground, built from tracked aircraft and their routes.
-- **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
-  never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking. Aircraft are shown with heading and colour:
+- **Live map** of every aircraft in the loaded area, refreshed every 10 s. Panning or zooming
+  never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking.
+  Views wider than 250 nm (e.g. a whole country) load once as several tiles and refresh only when you ask.
+  The app reopens where you left the map. Aircraft are shown with heading and colour:
   amber = civil, green = military, red = emergency squawk (7500/7600/7700), grey = on ground.
 - **Draggable detail sheet** with peek, half and full stops; minimising frames the flight path.
 - **Aircraft details**: altitude, vertical rate, speed, squawk, TAS/Mach, selected altitude, wind/OAT
@@ -30,7 +32,8 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Flight path** for the selected aircraft: the track flown since takeoff (adsb.lol trace history, OpenSky
   fallback), coloured by altitude and extended live, plus a dashed great-circle line to the destination with
   origin/destination markers when the route is known.
-- **Search** by callsign, registration or ICAO hex, anywhere in the world.
+- **Search** for flights (callsign, registration or ICAO hex, anywhere in the world), airports (by code, name or
+  city, offline) and places (towns, regions, landmarks).
 - **Watchlist alerts**: get a notification when a registration, callsign, hex or military callsign prefix
   (e.g. `RCH`, `FORTE`) is airborne. Checked every 15 minutes in the background.
 - **Aircraft list** of everything in view, sortable by distance, altitude, callsign or speed, and filterable by
@@ -50,6 +53,7 @@ An open-source Android flight tracker built only on free, public data. Military 
 | Photos | [Planespotters.net](https://www.planespotters.net/photo/api) | attribution + descriptive User-Agent required |
 | Airline logos | pics.avs.io (Aviasales image CDN, fetched at runtime) | undocumented; logos are the airlines' trademarks |
 | Airports | [OurAirports](https://ourairports.com/data/) (bundled, `tools/build_airports.py`) | public domain |
+| Place search | [Photon](https://photon.komoot.io) by komoot | OpenStreetMap data (ODbL); fair use |
 | Airline codes (ICAO → IATA) | [OpenFlights](https://openflights.org/data.php) (bundled, `tools/build_airlines.py`) | ODbL |
 | METAR | [aviationweather.gov](https://aviationweather.gov/data/api/) | US gov, free |
 | Radar | [RainViewer](https://www.rainviewer.com/api.html) | free tier, zoom ≤ 7 |

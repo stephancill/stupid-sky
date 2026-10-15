@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import net.stupidtech.sky.alerts.AlertWorker
 import net.stupidtech.sky.data.Aircraft
 import net.stupidtech.sky.data.AirportInfo
+import net.stupidtech.sky.data.Airports
 import net.stupidtech.sky.data.BoundingBox
 import net.stupidtech.sky.data.OpenSky
 import net.stupidtech.sky.data.Enrichment
@@ -15,7 +16,11 @@ import net.stupidtech.sky.data.Airlines
 import net.stupidtech.sky.data.Logos
 import net.stupidtech.sky.data.airlineIata
 import net.stupidtech.sky.data.Trace
+import net.stupidtech.sky.data.Provider
+import net.stupidtech.sky.data.Tiles
 import net.stupidtech.sky.data.Metar
+import net.stupidtech.sky.data.Place
+import net.stupidtech.sky.data.Places
 import net.stupidtech.sky.data.RateLimitedException
 import net.stupidtech.sky.data.RouteInfo
 import net.stupidtech.sky.data.Routes
@@ -39,6 +44,16 @@ import kotlinx.coroutines.launch
 data class Viewport(
     val lat: Double, val lon: Double, val radiusNm: Int,
     val south: Double, val west: Double, val north: Double, val east: Double,
+) {
+    /** Too big for one area query: loaded once as several tiles and not polled. */
+    val wide: Boolean get() = radiusNm > Provider.MAX_RADIUS_NM
+}
+
+/** Suggestions under the search bar. [places] is null while the geocoder hasn't answered yet. */
+data class SearchSuggestions(
+    val query: String = "",
+    val airports: List<AirportInfo> = emptyList(),
+    val places: List<Place>? = emptyList(),
 )
 
 /** A one-off request for the map to move. [zoom] null keeps the current zoom (but at least 8). */
@@ -77,6 +92,10 @@ data class UiState(
     val areaStale: Boolean = false,
     /** When the view first moved away from the loaded area (for the delayed refresh banner). */
     val areaStaleSince: Long? = null,
+    /** The loaded area is a zoomed-out snapshot (see [Viewport.wide]); refreshes only on request. */
+    val wideSnapshot: Boolean = false,
+    /** The snapshot covers only the centre of the view (too many tiles for the whole of it). */
+    val wideCropped: Boolean = false,
     /** Networks that failed on the last refresh (the others still supplied data). */
     val failedSources: List<String> = emptyList(),
     /** Airline and origin/destination by callsign, filled in progressively in the background. */
@@ -128,6 +147,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch(Dispatchers.IO) {
             Airlines.load(app.assets.open("airlines.tsv").bufferedReader().use { it.readText() })
+            Airports.load(app.assets.open("airports.geojson").bufferedReader().use { it.readText() })
         }
         viewModelScope.launch {
             logosEnabled.collect { on ->
@@ -176,6 +196,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val retryWait = openSkyRetryAt - System.currentTimeMillis()
                 if (retryWait > 0) delay(retryWait)
                 pollOpenSky()
+                if (loadedArea?.wide == true) break // zoomed-out snapshot: no polling
                 delay(OpenSky.pollIntervalSec(openSkyCredits, hasAccount) * 1000)
             }
         }
@@ -184,11 +205,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun pollOpenSky() {
         val v = loadedArea ?: return
         val box = BoundingBox(v.south, v.west, v.north, v.east)
+        val maxDeg = if (v.wide) OpenSky.WIDE_BOX_DEG else OpenSky.MAX_BOX_DEG
         try {
-            val r = OpenSky.states(box, openSkyCredentials.value)
+            val r = OpenSky.states(box, openSkyCredentials.value, maxDeg)
             openSkyList = r.aircraft
             openSkyFetchedAt = System.currentTimeMillis()
-            openSkyBox = box.cropAroundCentre(5.0)
+            openSkyBox = box.cropAroundCentre(maxDeg)
             openSkyCredits = r.creditsRemaining ?: openSkyCredits
             openSkyStatus(null)
             publish()
@@ -317,6 +339,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             while (true) {
                 poll()
                 refreshMetarsIfNeeded()
+                // A zoomed-out view costs one request per tile per network; load it once and let the user refresh.
+                if (loadedArea?.wide == true) break
                 delay(if (backoffMs > 0) backoffMs else POLL_MS)
             }
         }
@@ -328,7 +352,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         pollCount++
         _state.update { it.copy(loading = true) }
         try {
-            val result = FlightData.area(v.lat, v.lon, v.radiusNm)
+            val tiling = if (v.wide) Tiles.cover(BoundingBox(v.south, v.west, v.north, v.east)) else null
+            _state.update { it.copy(wideSnapshot = tiling != null, wideCropped = tiling?.cropped == true) }
+            val result = if (tiling == null) FlightData.area(v.lat, v.lon, v.radiusNm) else {
+                // Tiles take ~1 s each; show aircraft as they arrive rather than after the last one.
+                FlightData.areas(tiling.circles) { partial ->
+                    lastMain = partial.aircraft.filter { it.hasPosition }
+                    publish()
+                }
+            }
             var list = result.aircraft.filter { it.hasPosition }
 
             // Keep tracking the selected aircraft after it leaves the queried area,
@@ -554,6 +586,69 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private val _suggestions = MutableStateFlow(SearchSuggestions())
+    val suggestions: StateFlow<SearchSuggestions> = _suggestions
+    private var placesJob: Job? = null
+
+    /** Airports update on every keystroke (bundled data); places only after typing pauses. */
+    fun onSearchQuery(query: String) {
+        placesJob?.cancel()
+        val q = query.trim()
+        val wantPlaces = q.length >= 3
+        _suggestions.value = SearchSuggestions(q, Airports.search(q), places = if (wantPlaces) null else emptyList())
+        if (!wantPlaces) return
+        placesJob = viewModelScope.launch {
+            delay(PLACES_DEBOUNCE_MS)
+            val places = try {
+                Places.search(q)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(error = "Place search failed") }
+                emptyList()
+            }
+            _suggestions.update { if (it.query == q) it.copy(places = places) else it }
+        }
+    }
+
+    fun pickAirport(a: AirportInfo) {
+        clearSuggestions()
+        selectAirport(a)
+        moveCamera(a.lat, a.lon, AIRPORT_ZOOM)
+    }
+
+    fun pickPlace(p: Place) {
+        clearSuggestions()
+        select(null)
+        selectAirport(null)
+        // Fitting a building or street would zoom in far past where aircraft are useful; centre on it instead.
+        val fit = p.extent?.takeIf { it.north - it.south > 0.1 || it.east - it.west > 0.1 }
+        autoLoadNext = true
+        _state.update { it.copy(camera = CameraMove(p.lat, p.lon, PLACE_ZOOM, ++cameraId, fit = fit)) }
+    }
+
+    fun clearSuggestions() {
+        placesJob?.cancel()
+        _suggestions.value = SearchSuggestions()
+    }
+
+    /**
+     * Enter in the search bar: an exact airport code wins, then aircraft (hex / registration / callsign),
+     * then the top airport or place suggestion. [onResult] is false when nothing matched.
+     */
+    fun submitSearch(query: String, onResult: (Boolean) -> Unit) {
+        Airports.byCode(query)?.let { pickAirport(it); onResult(true); return }
+        search(query) { found ->
+            if (found) { clearSuggestions(); onResult(true); return@search }
+            val s = _suggestions.value
+            when {
+                s.airports.isNotEmpty() -> { pickAirport(s.airports.first()); onResult(true) }
+                !s.places.isNullOrEmpty() -> { pickPlace(s.places.first()); onResult(true) }
+                else -> onResult(false)
+            }
+        }
+    }
+
     /** Find by registration / callsign / hex anywhere in the world and fly to it. */
     fun search(query: String, onResult: (Boolean) -> Unit) = viewModelScope.launch {
         val hit = runCatching { FlightData.search(query) }
@@ -628,5 +723,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private const val METAR_MS = 10 * 60_000L
         private const val MAX_TRAIL = 360 // ~1 hour at 10 s
         private const val USER_ZOOM = 8.5
+        private const val AIRPORT_ZOOM = 11.0
+        private const val PLACE_ZOOM = 10.0
+        private const val PLACES_DEBOUNCE_MS = 400L
     }
 }

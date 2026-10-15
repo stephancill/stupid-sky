@@ -1,6 +1,7 @@
 package net.stupidtech.sky.data
 
 import net.stupidtech.sky.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -143,6 +144,31 @@ object FlightData {
         return aggregate { it.area(lat, lon, r) }
     }
 
+    /**
+     * Several area queries one after another (the throttle spaces them), merged by hex. [onProgress] gets the
+     * merged result after each successful tile. Tiles that fail are skipped; throws the first error only if
+     * every tile failed.
+     */
+    suspend fun areas(circles: List<Circle>, onProgress: (Aggregate) -> Unit = {}): Aggregate {
+        val ok = ArrayList<Aggregate>()
+        var firstError: Exception? = null
+        for (c in circles) {
+            try {
+                ok += aggregate { it.area(c.lat, c.lon, c.radiusNm) }
+                onProgress(combine(ok))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (firstError == null) firstError = e
+            }
+        }
+        if (ok.isEmpty()) throw firstError ?: IOException("No data")
+        return combine(ok)
+    }
+
+    private fun combine(parts: List<Aggregate>) =
+        Aggregate(aircraft = merge(parts.map { it.aircraft }), failed = parts.flatMapTo(HashSet()) { it.failed })
+
     suspend fun military(): Aggregate = aggregate { it.military() }
 
     /** Search by hex (6 hex chars), then registration, then callsign, across all networks. */
@@ -252,6 +278,7 @@ object FlightData {
             host.endsWith("adsbdb.com") -> 500
             host.endsWith("planespotters.net") -> 500
             host.endsWith("avs.io") -> 150
+            host.endsWith("komoot.io") -> 1_000  // Photon: fair use, typed queries are debounced too
             else -> 250
         }
 

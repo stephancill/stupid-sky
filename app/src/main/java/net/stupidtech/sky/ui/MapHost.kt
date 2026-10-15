@@ -60,14 +60,14 @@ fun MapHost(
     val currentOnAirportTap by rememberUpdatedState(onAirportTap)
 
     var style by remember { mutableStateOf<Style?>(null) }
-    val prefs = remember { context.getSharedPreferences("camera", Context.MODE_PRIVATE) }
+    val prefs = remember { cameraPrefs(context) }
 
     val mapView = remember {
         MapLibre.getInstance(context)
         MapView(context).apply {
             onCreate(null)
             getMapAsync { m ->
-                // Start where the user last looked; the device location takes over once known.
+                // Start where the user last looked (saved on every camera idle).
                 m.cameraPosition = CameraPosition.Builder()
                     .target(LatLng(prefs.getFloat("lat", 51.5f).toDouble(), prefs.getFloat("lon", 0f).toDouble()))
                     .zoom(prefs.getFloat("zoom", 7f).toDouble())
@@ -212,6 +212,11 @@ private fun org.maplibre.geojson.Feature.toAirportInfo(): AirportInfo? {
     )
 }
 
+private fun cameraPrefs(context: Context) = context.getSharedPreferences("camera", Context.MODE_PRIVATE)
+
+/** False on first launch, before the map has ever settled anywhere. */
+fun hasSavedCamera(context: Context): Boolean = cameraPrefs(context).contains("lat")
+
 private fun MapLibreMap.viewport(): Viewport {
     val b = projection.visibleRegion.latLngBounds
     val c = cameraPosition.target ?: b.center
@@ -221,7 +226,8 @@ private fun MapLibreMap.viewport(): Viewport {
     )
     return Viewport(
         lat = c.latitude, lon = c.longitude,
-        radiusNm = radius.roundToInt().coerceIn(5, 250),
+        // Not capped at the networks' 250 nm: a bigger view is loaded as several tiles.
+        radiusNm = radius.roundToInt().coerceAtLeast(5),
         south = b.latitudeSouth, west = b.longitudeWest, north = b.latitudeNorth, east = b.longitudeEast,
     )
 }

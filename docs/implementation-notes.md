@@ -24,6 +24,41 @@ If a later change reverses an earlier decision, add a new entry and mark the old
 
 ## Log
 
+### 2026-10-15 — App reopens where the map was left
+**Context:** The owner wanted closing and reopening the app to keep the map position.
+**Decision:** The camera was already saved on every camera idle (`camera` SharedPreferences in `MapHost`), but
+`MainActivity` centred on the device at every launch. Now it only does so when nothing is saved
+(`hasSavedCamera`), i.e. first launch, which is also when the location permission is first asked for.
+The "my location" button is unchanged. Selection (aircraft/airport) isn't restored.
+**Supersedes:** "start on the user's location" in "No requests on pan; refresh the loaded area" (first launch only now).
+
+### 2026-10-15 — Zoomed-out views load as tiles, once, on request
+**Context:** Viewing all of South Africa showed ~15 aircraft; FlightRadar24 showed 45 at the same moment. Both
+networks cap an area query at 250 nm, so a zoomed-out view only loaded a circle around its centre.
+Measured the same evening: adsb.lol across 7 circles covering South Africa had 23 of those aircraft, OpenSky
+added 6 more (29 of 45). Most of the rest were on the ground at JNB or cruising where no community feeder hears
+them, so it's coverage, not something the app can fix with these sources.
+**Decision:** `Viewport.radiusNm` is no longer capped; a view over 250 nm is `wide`. `Tiles.cover` covers its
+box with up to 24 circles (centre first; the centre is kept and the rest cropped when more would be needed) and
+`FlightData.areas` queries them one after another through the throttle, publishing as each tile arrives. A wide
+area is loaded once and **not polled** (owner's choice), and a "Not live when zoomed out · Refresh" prompt shows
+straight away. OpenSky gap-fill also runs once for a wide area, with a box up to 20°×20° (4 credits) instead of 5°.
+**Why / alternatives:** Tiling at the normal 10 s poll would multiply requests ~20× and break the etiquette rule;
+polling slower was offered and rejected in favour of manual refresh.
+**Watch out:** A portrait phone showing all of South Africa needs ~21 circles (~25 s to fill in at ~1 s per tile).
+
+### 2026-10-15 — Search covers airports and places
+**Context:** The owner wanted to search for locations and airports, not only aircraft.
+**Decision:** Typing shows suggestions: airports from the bundled `airports.geojson` (`Airports.search`, instant
+and offline; exact IATA/ICAO code first, then word-prefix matches on name/city, bigger airports first) and places
+from Photon (`Places.search`, debounced 400 ms, 3+ characters). Enter tries an exact airport code, then the
+existing aircraft search, then the top suggestion. Picking an airport opens its panel at zoom 11; a place fits its
+extent only when it's wider than 0.1°, otherwise centres at zoom 10, so a building doesn't zoom to street level.
+**Why / alternatives:** Nominatim's usage policy forbids autocomplete; Photon (komoot, OSM data) allows it under
+fair use and needs no key. adsbdb has no airport search.
+**Watch out:** Photon often returns a node and a way for the same place; `Places.parse` dedupes them (duplicate
+LazyColumn keys crashed the app before). Photon replies took ~5 s on the emulator.
+
 ### 2026-10-15 — Detail sheet with drag stops
 **Context:** The owner asked for a dynamically adjustable detail sheet with stops and interruptible animations.
 The earlier button-only panel used `animateContentSize`, which a drag can't interrupt.
@@ -203,7 +238,8 @@ use only. The real fix for local ground coverage is a receiver near the airport.
 **Context:** Users hit HTTP 429s. Causes: 5 s polling, polling continued in the background, every pan/zoom
 fired a request, and the initial view (zoom 5 over Europe) requested the maximum 250 nm radius.
 **Decision:** Poll the *loaded area* every 10 s only while the activity is started; panning never triggers a
-request ("Refresh this area" instead); start on the user's location at zoom 8.5 (much smaller radius); the
+request ("Refresh this area" instead); start on the user's location at zoom 8.5 (first launch only since
+"App reopens where the map was left") (much smaller radius); the
 selected aircraft outside the area is looked up only every third poll.
 **Why:** Explicit refresh also stops the map reloading while the user is still looking for a place.
 

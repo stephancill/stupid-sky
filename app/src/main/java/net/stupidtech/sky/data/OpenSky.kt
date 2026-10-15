@@ -33,7 +33,10 @@ object OpenSky {
         "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 
     /** Largest box that still costs a single credit. */
-    private const val MAX_BOX_DEG = 5.0
+    const val MAX_BOX_DEG = 5.0
+
+    /** For a zoomed-out snapshot (loaded once, on request): over 400 sq° costs the maximum of 4 credits. */
+    const val WIDE_BOX_DEG = 20.0
 
     data class Result(val aircraft: List<Aircraft>, val creditsRemaining: Int?)
 
@@ -44,8 +47,8 @@ object OpenSky {
     private var tokenFor: String? = null
 
     /** States within the viewport (cropped to ≤ 5°×5° around its centre). */
-    suspend fun states(v: BoundingBox, creds: OpenSkyCredentials?): Result = withContext(Dispatchers.IO) {
-        val box = v.cropAroundCentre(MAX_BOX_DEG)
+    suspend fun states(v: BoundingBox, creds: OpenSkyCredentials?, maxDeg: Double = MAX_BOX_DEG): Result = withContext(Dispatchers.IO) {
+        val box = v.cropAroundCentre(maxDeg)
         val url = String.format(
             Locale.US, "%s?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f&extended=1",
             STATES_URL, box.south, box.west, box.north, box.east,

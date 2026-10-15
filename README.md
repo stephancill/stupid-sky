@@ -3,7 +3,8 @@
 An open-source Android flight tracker built only on free, public data. Military aircraft are not filtered out.
 
 ## Features
-- **Live map** of every aircraft within the visible area (up to 250 nm), refreshed every 5 s. Aircraft are shown with heading and colour:
+- **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
+  never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking. Aircraft are shown with heading and colour:
   amber = civil, green = military, red = emergency squawk (7500/7600/7700), grey = on ground.
 - **Military (global) mode** loads every aircraft the network flags as military, worldwide.
 - **Aircraft details**: altitude, vertical rate, speed, squawk, TAS/Mach, selected altitude, wind/OAT
@@ -15,7 +16,10 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Weather**: RainViewer radar overlay, plus METAR stations coloured by flight category (VFR/MVFR/IFR/LIFR). Tap a station for the raw METAR.
 - **Watchlist alerts**: get a notification when a registration, callsign, hex or military callsign prefix
   (e.g. `RCH`, `FORTE`) is airborne. Checked every 15 minutes in the background.
-- **Switch data source** between adsb.lol and adsb.fi.
+- **Aircraft list** of everything in view, sortable by distance, altitude, callsign or speed, and filterable by
+  airborne / ground / military or text. Tap an aircraft to fly to it.
+- **Sources combined automatically**: adsb.lol and adsb.fi are queried in parallel and merged, keeping the
+  fresher position for each aircraft. If one network is rate-limited, the other keeps working.
 - **OpenSky gap-fill** merges in aircraft the main feed misses, such as aircraft on the ground at airports with no
   nearby adsb.lol/adsb.fi receiver. Uses the free tier only: without an account it refreshes about every 5 min;
   with a free OpenSky API client (Settings) about every 30 s. The refresh rate adjusts so the daily credits last until they reset.

@@ -21,7 +21,6 @@ import com.skywatch.tracker.R
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Settings
 import com.skywatch.tracker.ui.MainActivity
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
@@ -35,11 +34,10 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         val settings = Settings(applicationContext)
         val entries = settings.watchlist.first()
         if (entries.isEmpty()) return Result.success()
-        val provider = settings.provider.first()
         val now = System.currentTimeMillis()
 
         for (entry in entries) {
-            val hits = runCatching { FlightData.lookup(provider, entry.kind, entry.value) }
+            val hits = runCatching { FlightData.lookup(entry.kind, entry.value) }
                 .getOrElse { return Result.retry() }
                 .filter { it.hasPosition && !it.onGround }
             for (ac in hits) {
@@ -54,7 +52,6 @@ class AlertWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
                     ac.hex,
                 )
             }
-            delay(1100) // stay under adsb.fi's 1 req/s limit
         }
         return Result.success()
     }

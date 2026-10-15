@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resumeWithException
 
-/** Community ADS-B networks with free, unfiltered public APIs. */
+/** Community ADS-B networks with free, unfiltered public APIs. All are queried and merged. */
 enum class Provider(val label: String, val baseUrl: String) {
     ADSB_LOL("adsb.lol", "https://api.adsb.lol/v2"),
     ADSB_FI("adsb.fi", "https://opendata.adsb.fi/api/v2");
@@ -65,29 +65,102 @@ object FlightData {
 
     private val enrichmentCache = ConcurrentHashMap<String, Enrichment>()
 
-    suspend fun area(p: Provider, lat: Double, lon: Double, radiusNm: Int): List<Aircraft> =
-        get<AircraftResponse>(p.area(lat, lon, radiusNm.coerceIn(1, Provider.MAX_RADIUS_NM))).all
+    /** Result of querying every network; [failed] lists networks that errored or were skipped. */
+    data class Aggregate(val aircraft: List<Aircraft>, val failed: Set<Provider>)
 
-    suspend fun military(p: Provider): List<Aircraft> = get<AircraftResponse>(p.military()).all
+    /** Per-network cooldown after a 429, so one busy network doesn't hold up the other. */
+    private val cooldownUntil = ConcurrentHashMap<Provider, Long>()
+    private val cooldownMs = ConcurrentHashMap<Provider, Long>()
 
-    /** Search by hex (6 hex chars), then registration, then callsign. */
-    suspend fun search(p: Provider, query: String): List<Aircraft> {
+    /**
+     * Queries all networks in parallel and merges by ICAO hex. Throws only if every network
+     * failed (RateLimitedException if they were all rate limited).
+     */
+    private suspend fun aggregate(path: (Provider) -> String): Aggregate = coroutineScope {
+        val now = System.currentTimeMillis()
+        val results = Provider.entries.map { p ->
+            p to async {
+                if ((cooldownUntil[p] ?: 0L) > now) {
+                    Result.failure(RateLimitedException(p.label, ((cooldownUntil[p]!! - now) / 1000)))
+                } else {
+                    runCatching { get<AircraftResponse>(path(p)).all }.onSuccess {
+                        cooldownMs.remove(p)
+                    }.onFailure { e ->
+                        if (e is RateLimitedException) {
+                            // Honour Retry-After, else back off 20 s, 40 s, 80 s … up to 5 min.
+                            val next = e.retryAfterSec?.times(1000)
+                                ?: ((cooldownMs[p] ?: 10_000L) * 2).coerceAtMost(300_000L)
+                            cooldownMs[p] = next
+                            cooldownUntil[p] = System.currentTimeMillis() + next
+                        }
+                    }
+                }
+            }
+        }.map { (p, d) -> p to d.await() }
+
+        val ok = results.filter { it.second.isSuccess }
+        if (ok.isEmpty()) {
+            val errors = results.mapNotNull { it.second.exceptionOrNull() }
+            val limited = errors.filterIsInstance<RateLimitedException>()
+            if (limited.size == errors.size) {
+                throw RateLimitedException(
+                    limited.joinToString(" & ") { it.host },
+                    limited.mapNotNull { it.retryAfterSec }.minOrNull(),
+                )
+            }
+            throw errors.firstOrNull { it !is RateLimitedException } ?: IOException("No data")
+        }
+        Aggregate(
+            aircraft = merge(ok.map { it.second.getOrThrow() }),
+            failed = results.filter { it.second.isFailure }.mapTo(HashSet()) { it.first },
+        )
+    }
+
+    /** Keeps the freshest position per aircraft, filling missing details from the other report. */
+    internal fun merge(lists: List<List<Aircraft>>): List<Aircraft> {
+        val byHex = LinkedHashMap<String, Aircraft>()
+        for (list in lists) for (a in list) {
+            val b = byHex[a.hex]
+            byHex[a.hex] = if (b == null) a else {
+                val (fresh, other) = if ((a.seenPos ?: 999.0) <= (b.seenPos ?: 999.0)) a to b else b to a
+                fresh.copy(
+                    registration = fresh.registration ?: other.registration,
+                    typeCode = fresh.typeCode ?: other.typeCode,
+                    desc = fresh.desc ?: other.desc,
+                    flight = fresh.flight ?: other.flight,
+                    dbFlags = fresh.dbFlags or other.dbFlags,
+                    squawk = fresh.squawk ?: other.squawk,
+                )
+            }
+        }
+        return byHex.values.toList()
+    }
+
+    suspend fun area(lat: Double, lon: Double, radiusNm: Int): Aggregate {
+        val r = radiusNm.coerceIn(1, Provider.MAX_RADIUS_NM)
+        return aggregate { it.area(lat, lon, r) }
+    }
+
+    suspend fun military(): Aggregate = aggregate { it.military() }
+
+    /** Search by hex (6 hex chars), then registration, then callsign, across all networks. */
+    suspend fun search(query: String): List<Aircraft> {
         val q = query.trim().replace(" ", "")
         if (q.isEmpty()) return emptyList()
         if (HEX.matches(q)) {
-            val r = runCatching { get<AircraftResponse>(p.hex(q)).all }.getOrDefault(emptyList())
+            val r = runCatching { aggregate { it.hex(q) }.aircraft }.getOrDefault(emptyList())
             if (r.isNotEmpty()) return r
         }
-        val byReg = runCatching { get<AircraftResponse>(p.registration(q)).all }.getOrDefault(emptyList())
+        val byReg = runCatching { aggregate { it.registration(q) }.aircraft }.getOrDefault(emptyList())
         if (byReg.isNotEmpty()) return byReg
-        return runCatching { get<AircraftResponse>(p.callsign(q)).all }.getOrDefault(emptyList())
+        return runCatching { aggregate { it.callsign(q) }.aircraft }.getOrDefault(emptyList())
     }
 
-    suspend fun lookup(p: Provider, kind: WatchKind, value: String): List<Aircraft> = when (kind) {
-        WatchKind.HEX -> get<AircraftResponse>(p.hex(value)).all
-        WatchKind.REG -> get<AircraftResponse>(p.registration(value)).all
-        WatchKind.CALLSIGN -> get<AircraftResponse>(p.callsign(value)).all
-        WatchKind.MIL_PREFIX -> military(p).filter {
+    suspend fun lookup(kind: WatchKind, value: String): List<Aircraft> = when (kind) {
+        WatchKind.HEX -> aggregate { it.hex(value) }.aircraft
+        WatchKind.REG -> aggregate { it.registration(value) }.aircraft
+        WatchKind.CALLSIGN -> aggregate { it.callsign(value) }.aircraft
+        WatchKind.MIL_PREFIX -> military().aircraft.filter {
             it.callsign?.startsWith(value, ignoreCase = true) == true
         }
     }

@@ -36,7 +36,6 @@ private val Context.store by preferencesDataStore("skywatch")
 
 class Settings(private val context: Context) {
     private val watchKey = stringSetPreferencesKey("watchlist")
-    private val providerKey = stringPreferencesKey("provider")
     private val openSkyOnKey = booleanPreferencesKey("opensky_on")
     private val openSkyIdKey = stringPreferencesKey("opensky_id")
     private val openSkySecretKey = stringPreferencesKey("opensky_secret")
@@ -57,12 +56,6 @@ class Settings(private val context: Context) {
     val watchlist: Flow<List<WatchEntry>> = context.store.data.map { prefs ->
         prefs[watchKey].orEmpty().mapNotNull(WatchEntry::decode).sortedBy { it.display }
     }
-
-    val provider: Flow<Provider> = context.store.data.map { prefs ->
-        prefs[providerKey]?.let { runCatching { Provider.valueOf(it) }.getOrNull() } ?: Provider.ADSB_LOL
-    }
-
-    suspend fun setProvider(p: Provider) = context.store.edit { it[providerKey] = p.name }
 
     suspend fun addWatch(e: WatchEntry) = context.store.edit {
         it[watchKey] = it[watchKey].orEmpty() + e.encode()

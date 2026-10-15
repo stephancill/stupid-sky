@@ -10,7 +10,6 @@ import com.skywatch.tracker.data.OpenSky
 import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.Metar
-import com.skywatch.tracker.data.Provider
 import com.skywatch.tracker.data.RateLimitedException
 import com.skywatch.tracker.data.Settings
 import com.skywatch.tracker.data.UserLocation
@@ -24,8 +23,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -62,6 +59,12 @@ data class UiState(
     /** Aircraft added by OpenSky that the main feed didn't have. */
     val openSkyAdded: Int = 0,
     val openSkyStatus: String? = null,
+    /** What the map currently shows (for the list view). */
+    val viewport: Viewport? = null,
+    /** The map has moved away from the area last loaded; offer "Refresh this area". */
+    val areaStale: Boolean = false,
+    /** Networks that failed on the last refresh (the others still supplied data). */
+    val failedSources: List<String> = emptyList(),
 )
 
 @OptIn(FlowPreview::class)
@@ -71,12 +74,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState(locationGranted = UserLocation.hasPermission(app)))
     val state: StateFlow<UiState> = _state
 
-    val provider = settings.provider.stateIn(viewModelScope, SharingStarted.Eagerly, Provider.ADSB_LOL)
     val watchlist = settings.watchlist.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val openSkyEnabled = settings.openSkyEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val openSkyCredentials = settings.openSkyCredentials.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private val viewport = MutableStateFlow<Viewport?>(null)
+    /** The area being refreshed. Only changes on "Refresh this area" or app-driven camera moves. */
+    private var loadedArea: Viewport? = null
+    private var autoLoadNext = true
     private val trails = HashMap<String, ArrayDeque<LatLon>>()
     private var enrichJob: Job? = null
     private var pollJob: Job? = null
@@ -97,24 +102,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            // Mode / filter changes call restartPolling() directly.
-            combine(viewport.filterNotNull().debounce(600), provider) { v, p -> v to p }
-                .collect { restartPolling() }
-        }
-        viewModelScope.launch {
             combine(openSkyEnabled, openSkyCredentials) { on, c -> on to c }.collect {
                 openSkyCredits = null
                 openSkyRetryAt = 0
                 restartOpenSky(immediate = true)
-            }
-        }
-        viewModelScope.launch {
-            // Fetch OpenSky early when the user pans somewhere it hasn't covered yet.
-            viewport.filterNotNull().debounce(1500).collect { v ->
-                val box = openSkyBox
-                val outside = box == null || v.lat !in box.south..box.north || v.lon !in box.west..box.east
-                val minGap = if (openSkyCredentials.value != null) 30_000L else 120_000L
-                if (outside && System.currentTimeMillis() - openSkyFetchedAt > minGap) restartOpenSky(immediate = true)
             }
         }
     }
@@ -157,7 +148,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun pollOpenSky() {
-        val v = viewport.value ?: return
+        val v = loadedArea ?: return
         // The global military view doesn't need gap-filling at one airport.
         if (_state.value.mode != Mode.ALL) return
         val box = BoundingBox(v.south, v.west, v.north, v.east)
@@ -221,13 +212,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun restartPolling() {
+    private fun restartPolling(immediate: Boolean = false) {
         pollJob?.cancel()
         if (!active) return
         pollJob = viewModelScope.launch {
-            // Don't fire a new request straight away if we just polled (e.g. while panning).
+            // Keep a small gap between requests, and respect any rate-limit backoff.
             val sinceLast = System.currentTimeMillis() - lastPollAt
-            val wait = maxOf(MIN_GAP_MS - sinceLast, backoffMs - sinceLast)
+            val gap = if (immediate) MIN_GAP_MS else POLL_MS
+            val wait = maxOf(gap - sinceLast, backoffMs - sinceLast)
             if (wait > 0) delay(wait)
             while (true) {
                 poll()
@@ -238,30 +230,37 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun poll() {
-        val v = viewport.value ?: return
-        val p = provider.value
+        val v = loadedArea ?: return
         val mode = _state.value.mode
         lastPollAt = System.currentTimeMillis()
         pollCount++
         _state.update { it.copy(loading = true) }
         try {
-            var list = when (mode) {
-                Mode.ALL -> FlightData.area(p, v.lat, v.lon, v.radiusNm)
-                Mode.MILITARY -> FlightData.military(p)
-            }.filter { it.hasPosition }
+            val result = when (mode) {
+                Mode.ALL -> FlightData.area(v.lat, v.lon, v.radiusNm)
+                Mode.MILITARY -> FlightData.military()
+            }
+            var list = result.aircraft.filter { it.hasPosition }
 
             // Keep tracking the selected aircraft after it leaves the queried area,
             // but only every third poll to keep request volume down.
             val sel = _state.value.selected
             if (sel != null && list.none { it.hex == sel.hex } && pollCount % 3 == 0) {
-                runCatching { FlightData.lookup(p, WatchKind.HEX, sel.hex) }
+                runCatching { FlightData.lookup(WatchKind.HEX, sel.hex) }
                     .getOrNull()?.firstOrNull { it.hasPosition }?.let { list = list + it }
             }
 
             backoffMs = 0
             lastMain = list
             publish()
-            _state.update { it.copy(loading = false, error = null, lastUpdate = System.currentTimeMillis()) }
+            _state.update {
+                it.copy(
+                    loading = false,
+                    error = null,
+                    lastUpdate = System.currentTimeMillis(),
+                    failedSources = result.failed.map { f -> f.label },
+                )
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: RateLimitedException) {
@@ -293,6 +292,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onViewportChanged(v: Viewport) {
         viewport.value = v
+        val loaded = loadedArea
+        if (loaded == null || autoLoadNext) {
+            loadArea(v)
+        } else {
+            _state.update { it.copy(viewport = v, areaStale = movedAway(loaded, v)) }
+        }
+    }
+
+    /** "Refresh this area" button, or the refresh icon. */
+    fun refreshArea() {
+        viewport.value?.let { loadArea(it, manual = true) }
+    }
+
+    private fun loadArea(v: Viewport, manual: Boolean = false) {
+        val previous = loadedArea
+        loadedArea = v
+        autoLoadNext = false
+        if (previous != null && movedAway(previous, v)) {
+            trails.clear()
+            lastMain = emptyList()
+        }
+        _state.update { it.copy(viewport = v, areaStale = false) }
+        restartPolling(immediate = true)
+        // OpenSky credits are scarce: re-query only if the new area isn't covered by the last
+        // query and we haven't just fetched.
+        val box = openSkyBox
+        val covered = box != null && v.lat in box.south..box.north && v.lon in box.west..box.east
+        val minGap = if (openSkyCredentials.value != null) 30_000L else 120_000L
+        if ((!covered || manual) && System.currentTimeMillis() - openSkyFetchedAt > minGap) {
+            restartOpenSky(immediate = true)
+        }
+    }
+
+    /** True when the view no longer matches the loaded area well enough. */
+    private fun movedAway(loaded: Viewport, v: Viewport): Boolean {
+        val dLat = (v.lat - loaded.lat) * 60            // nm
+        val dLon = (v.lon - loaded.lon) * 60 * kotlin.math.cos(Math.toRadians(v.lat))
+        val shift = kotlin.math.sqrt(dLat * dLat + dLon * dLon)
+        val zoomRatio = v.radiusNm.toDouble() / loaded.radiusNm
+        return shift > loaded.radiusNm * 0.3 || zoomRatio > 1.6 || zoomRatio < 0.5
     }
 
     // ---- location ----
@@ -312,6 +351,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun moveCamera(lat: Double, lon: Double, zoom: Double?) {
+        // App-driven moves (my location, search) load the new area automatically.
+        autoLoadNext = true
         _state.update { it.copy(camera = CameraMove(lat, lon, zoom, ++cameraId)) }
     }
 
@@ -322,7 +363,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lastMain = emptyList()
         _state.update { it.copy(mode = m, aircraft = emptyList(), openSkyAdded = 0) }
         trails.clear()
-        restartPolling()
+        restartPolling(immediate = true)
     }
 
     fun setHideGround(h: Boolean) {
@@ -339,11 +380,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         settings.setOpenSkyCredentials(id, secret)
     }
 
-    fun setProvider(p: Provider) = viewModelScope.launch {
-        backoffMs = 0
-        settings.setProvider(p)
-    }
-
     fun select(hex: String?) {
         enrichJob?.cancel()
         if (hex == null) {
@@ -352,6 +388,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
         val ac = _state.value.aircraft.firstOrNull { it.hex == hex } ?: return
         selectAircraft(ac, moveCamera = false)
+    }
+
+    /** From the list view: select and centre on the aircraft without reloading the area. */
+    fun selectAndFocus(hex: String) {
+        val ac = _state.value.aircraft.firstOrNull { it.hex == hex } ?: return
+        selectAircraft(ac, moveCamera = false)
+        _state.update { it.copy(camera = CameraMove(ac.lat!!, ac.lon!!, null, ++cameraId)) }
     }
 
     private fun selectAircraft(ac: Aircraft, moveCamera: Boolean) {
@@ -373,7 +416,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Find by registration / callsign / hex anywhere in the world and fly to it. */
     fun search(query: String, onResult: (Boolean) -> Unit) = viewModelScope.launch {
-        val hit = runCatching { FlightData.search(provider.value, query) }
+        val hit = runCatching { FlightData.search(query) }
             .getOrDefault(emptyList()).firstOrNull { it.hasPosition }
         if (hit != null) {
             _state.update { s -> s.copy(aircraft = s.aircraft.filter { it.hex != hit.hex } + hit) }
@@ -410,7 +453,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun refreshMetarsIfNeeded() {
         if (!_state.value.showMetars) return
-        val v = viewport.value ?: return
+        val v = loadedArea ?: return
         val stale = System.currentTimeMillis() - lastMetarFetch > METAR_MS
         if (!stale && v == lastMetarViewport) return
         // aviationweather.gov rejects huge boxes; only load when zoomed in reasonably.
@@ -441,7 +484,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val POLL_MS = 10_000L
-        private const val MIN_GAP_MS = 3_000L
+        private const val MIN_GAP_MS = 1_500L
         private const val METAR_MS = 10 * 60_000L
         private const val MAX_TRAIL = 360 // ~1 hour at 10 s
         private const val USER_ZOOM = 8.5

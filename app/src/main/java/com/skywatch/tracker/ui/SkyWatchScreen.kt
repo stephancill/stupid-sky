@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Menu
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledIconToggleButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -43,10 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -64,6 +62,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -84,6 +84,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
     var watchPrefill by remember { mutableStateOf<WatchEntry?>(null) }
     var showWatchDialog by rememberSaveable { mutableStateOf(false) }
     var showList by rememberSaveable { mutableStateOf(false) }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     var detailCollapsed by rememberSaveable { mutableStateOf(false) }
     // Each newly selected aircraft opens expanded.
     LaunchedEffect(state.selected?.hex) { detailCollapsed = false }
@@ -101,9 +102,12 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             Modifier.statusBarsPadding().padding(12.dp).fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SearchBar(onMenu = { showSettings = true }, onSearch = vm::search)
             Row(verticalAlignment = Alignment.CenterVertically) {
+                FilledTonalIconButton(onClick = { showSettings = true }) { Icon(Icons.Default.Menu, "Settings") }
                 Spacer(Modifier.weight(1f))
+                FilledIconToggleButton(checked = showSearch, onCheckedChange = { showSearch = it }) {
+                    Icon(Icons.Default.Search, "Search")
+                }
                 FilledIconToggleButton(checked = showList, onCheckedChange = { showList = it }) {
                     Icon(Icons.AutoMirrored.Filled.List, "Aircraft list")
                 }
@@ -113,6 +117,12 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                 FilledIconToggleButton(checked = state.showMetars, onCheckedChange = { vm.toggleMetars() }) {
                     Icon(Icons.Default.Thermostat, "METARs")
                 }
+            }
+            AnimatedVisibility(visible = showSearch) {
+                SearchBar(
+                    onClose = { showSearch = false },
+                    onSearch = { q, done -> vm.search(q) { found -> done(found); if (found) showSearch = false } },
+                )
             }
             // Panning never triggers a request on its own; offer an explicit refresh instead.
             AnimatedVisibility(
@@ -219,17 +229,22 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
 }
 
 @Composable
-private fun SearchBar(onMenu: () -> Unit, onSearch: (String, (Boolean) -> Unit) -> Unit) {
+private fun SearchBar(onClose: () -> Unit, onSearch: (String, (Boolean) -> Unit) -> Unit) {
     var query by rememberSaveable { mutableStateOf("") }
     var notFound by remember { mutableStateOf(false) }
     val focus = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
+    // Open the keyboard straight away when the search bar appears.
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Surface(shape = RoundedCornerShape(28.dp), shadowElevation = 6.dp, tonalElevation = 2.dp) {
         TextField(
             value = query,
             onValueChange = { query = it; notFound = false },
             placeholder = { Text(if (notFound) "Not found / not airborne" else "Callsign, registration or hex") },
-            leadingIcon = { IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Settings") } },
-            trailingIcon = { Icon(Icons.Default.Search, null) },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                IconButton(onClick = { focus.clearFocus(); onClose() }) { Icon(Icons.Default.Close, "Close search") }
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(onSearch = {
@@ -242,7 +257,7 @@ private fun SearchBar(onMenu: () -> Unit, onSearch: (String, (Boolean) -> Unit) 
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
             ),
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
         )
     }
 }

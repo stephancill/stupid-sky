@@ -150,7 +150,7 @@ fun MapHost(
                 .include(LatLng(fit.south, fit.west))
                 .build()
             // Leave room for the search bar on top and the minimised panel at the bottom.
-            val pad = intArrayOf((40 * d).toInt(), (190 * d).toInt(), (40 * d).toInt(), (190 * d).toInt())
+            val pad = intArrayOf((40 * d).toInt(), (120 * d).toInt(), (40 * d).toInt(), (190 * d).toInt())
             m.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, pad[0], pad[1], pad[2], pad[3]), 1200)
         } else {
             val zoom = c.zoom ?: maxOf(m.cameraPosition.zoom, 8.0)

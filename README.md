@@ -53,7 +53,8 @@ Latest APK: https://github.com/stephancill/stupid-sky/releases/latest/download/s
 (or `stupid-sky-universal.apk` for any phone). All releases: https://github.com/stephancill/stupid-sky/releases
 
 ## Releasing
-Push a version tag and GitHub Actions tests, builds and publishes the release:
+GitHub Actions tests, builds and publishes releases. Either open **Actions → Release → Run workflow** and
+enter a version (e.g. `v0.1.1`), which tags the current `main`, or push a tag:
 ```
 git tag v0.1.1 && git push origin v0.1.1
 ```

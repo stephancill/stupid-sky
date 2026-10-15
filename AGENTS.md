@@ -3,6 +3,16 @@
 Guide for AI agents (and humans) contributing to **stupid sky**, a free Android flight tracker built only on
 community and open data. Read this before changing code.
 
+## Before you start and when you finish
+
+1. **Read [`docs/implementation-notes.md`](docs/implementation-notes.md) before making changes.** It records
+   why things are built the way they are: dead ends that were already tried, measured API limits, and choices
+   the owner made deliberately. Skipping it is how the same mistakes get made twice.
+2. **Update it when you make a change that involves a decision**: a trade-off, a workaround, a rejected
+   alternative, a limit you measured, or a reason not to do the obvious thing. Add a dated entry at the top
+   of the log using the template in that file. If you reverse an earlier decision, add a new entry and mark
+   the old one superseded instead of deleting it. Pure refactors and small fixes don't need an entry.
+
 ## What the app is
 
 - Live map of aircraft from community ADS-B networks, with military aircraft unfiltered.
@@ -51,6 +61,7 @@ app/src/main/assets/airports.geojson   generated (see tools/)
 app/src/main/res/drawable/ic_launcher_*.xml, ic_stat_logo.xml   generated (see tools/)
 app/src/test/   unit tests; fixtures in app/src/test/resources are real captured API responses
 tools/          generators: build_airports.py, build_icon.py; loop-icon.svg is the icon source of truth
+docs/implementation-notes.md   design decisions and their reasons (read first, keep updated)
 ```
 
 ## Architecture in one page
@@ -138,3 +149,4 @@ User-Agent is `StupidSky/<version> (+<CONTACT>)`; `CONTACT` is a `buildConfigFie
 - Small, focused commits with a summary line and a short body explaining why.
 - Run `./gradlew testDebugUnitTest assembleDebug` before committing.
 - Update `README.md` (features, data sources) and this file when behaviour or architecture changes.
+- Add an entry to `docs/implementation-notes.md` for any design decision, in the same commit as the change.

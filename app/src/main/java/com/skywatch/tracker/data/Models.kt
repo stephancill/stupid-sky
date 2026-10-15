@@ -170,6 +170,23 @@ data class RainViewerRadar(val past: List<RainViewerFrame> = emptyList())
 @Serializable
 data class RainViewerFrame(val time: Long, val path: String)
 
+/** An airport tapped on the map (from the bundled OurAirports data). */
+data class AirportInfo(
+    val code: String,
+    val icao: String,
+    val iata: String?,
+    val name: String,
+    val city: String?,
+    val elevationFt: Int?,
+    val lat: Double,
+    val lon: Double,
+    val military: Boolean,
+) {
+    /** Matches an adsbdb route airport by ICAO or IATA code. */
+    fun matches(a: Airport?): Boolean =
+        a != null && ((a.icao != null && a.icao.equals(icao, true)) || (iata != null && a.iata.equals(iata, true)))
+}
+
 /** Everything the detail sheet shows beyond the live position report. */
 data class Enrichment(
     val route: FlightRoute? = null,

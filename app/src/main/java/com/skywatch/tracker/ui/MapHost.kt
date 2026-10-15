@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.skywatch.tracker.data.AirportInfo
 import com.skywatch.tracker.data.LatLon
 import com.skywatch.tracker.map.MapLayers
 import org.maplibre.android.MapLibre
@@ -45,6 +46,7 @@ fun MapHost(
     onViewport: (Viewport) -> Unit,
     onAircraftTap: (String?) -> Unit,
     onMetarTap: (String) -> Unit,
+    onAirportTap: (AirportInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -54,6 +56,7 @@ fun MapHost(
     val currentOnViewport by rememberUpdatedState(onViewport)
     val currentOnAircraftTap by rememberUpdatedState(onAircraftTap)
     val currentOnMetarTap by rememberUpdatedState(onMetarTap)
+    val currentOnAirportTap by rememberUpdatedState(onAirportTap)
 
     var style by remember { mutableStateOf<Style?>(null) }
     val prefs = remember { context.getSharedPreferences("camera", Context.MODE_PRIVATE) }
@@ -93,9 +96,13 @@ fun MapHost(
                     val box = RectF(p.x - r, p.y - r, p.x + r, p.y + r)
                     val ac = m.queryRenderedFeatures(box, MapLayers.LAYER_AIRCRAFT).firstOrNull()
                     val metar = if (ac == null) m.queryRenderedFeatures(box, MapLayers.LAYER_METAR).firstOrNull() else null
+                    val apt = if (ac == null && metar == null) {
+                        m.queryRenderedFeatures(box, MapLayers.LAYER_APT).firstOrNull()
+                    } else null
                     when {
                         ac != null -> currentOnAircraftTap(ac.getStringProperty("hex"))
                         metar != null -> currentOnMetarTap(metar.getStringProperty("id"))
+                        apt != null -> apt.toAirportInfo()?.let(currentOnAirportTap)
                         else -> currentOnAircraftTap(null)
                     }
                     true
@@ -181,6 +188,22 @@ private fun MapLibreMap.showUserLocation(context: Context, style: Style) {
             renderMode = RenderMode.NORMAL
         }
     }
+}
+
+private fun org.maplibre.geojson.Feature.toAirportInfo(): AirportInfo? {
+    val p = geometry() as? org.maplibre.geojson.Point ?: return null
+    fun str(k: String) = if (hasNonNullValueForProperty(k)) getStringProperty(k) else null
+    return AirportInfo(
+        code = str("code") ?: return null,
+        icao = str("icao") ?: return null,
+        iata = str("iata"),
+        name = str("name") ?: "",
+        city = str("city"),
+        elevationFt = if (hasNonNullValueForProperty("elev")) getNumberProperty("elev").toInt() else null,
+        lat = p.latitude(),
+        lon = p.longitude(),
+        military = hasNonNullValueForProperty("mil") && getBooleanProperty("mil"),
+    )
 }
 
 private fun MapLibreMap.viewport(): Viewport {

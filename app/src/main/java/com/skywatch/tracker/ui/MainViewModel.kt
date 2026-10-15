@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.skywatch.tracker.alerts.AlertWorker
 import com.skywatch.tracker.data.Aircraft
+import com.skywatch.tracker.data.AirportInfo
 import com.skywatch.tracker.data.BoundingBox
 import com.skywatch.tracker.data.OpenSky
 import com.skywatch.tracker.data.Enrichment
@@ -77,6 +78,8 @@ data class UiState(
     /** IATA codes whose logo card is loaded (bitmaps live in [Logos]). */
     val logos: Set<String> = emptySet(),
     val showLogos: Boolean = true,
+    val selectedAirport: AirportInfo? = null,
+    val airportMetar: Metar? = null,
 )
 
 @OptIn(FlowPreview::class)
@@ -451,8 +454,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** History from the trace API followed by positions we've received live since. */
     private fun fullPath(hex: String): List<LatLon> = selectedHistory + trails[hex]?.toList().orEmpty()
 
+    private var airportJob: Job? = null
+
+    fun selectAirport(a: AirportInfo?) {
+        airportJob?.cancel()
+        if (a != null) select(null)
+        _state.update { it.copy(selectedAirport = a, airportMetar = null, selectedMetar = null) }
+        if (a == null) return
+        airportJob = viewModelScope.launch {
+            val m = runCatching { FlightData.metar(a.icao) }.getOrNull()
+            _state.update { if (it.selectedAirport == a) it.copy(airportMetar = m) else it }
+        }
+    }
+
     fun select(hex: String?) {
         enrichJob?.cancel()
+        if (hex != null) _state.update { it.copy(selectedAirport = null) }
         if (hex == null) {
             traceJob?.cancel()
             selectedHistory = emptyList()
@@ -493,6 +510,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun selectAircraft(ac: Aircraft, moveCamera: Boolean) {
         enrichJob?.cancel()
+        airportJob?.cancel()
+        _state.update { it.copy(selectedAirport = null) }
         if (_state.value.selected?.hex != ac.hex) {
             traceJob?.cancel()
             selectedHistory = emptyList()

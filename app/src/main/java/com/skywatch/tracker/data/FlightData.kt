@@ -201,6 +201,9 @@ object FlightData {
         return get("https://aviationweather.gov/api/data/metar?bbox=$bbox&format=json")
     }
 
+    suspend fun metar(icao: String): Metar? =
+        get<List<Metar>>("https://aviationweather.gov/api/data/metar?ids=$icao&format=json").firstOrNull()
+
     /** Latest RainViewer radar frame as a XYZ tile template. */
     suspend fun radarTileUrl(): String? {
         val maps = get<RainViewerMaps>("https://api.rainviewer.com/public/weather-maps.json")

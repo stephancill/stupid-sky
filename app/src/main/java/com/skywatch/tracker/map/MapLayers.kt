@@ -46,6 +46,7 @@ import org.maplibre.android.style.layers.PropertyFactory.textAllowOverlap
 import org.maplibre.android.style.layers.PropertyFactory.textAnchor
 import org.maplibre.android.style.layers.PropertyFactory.textColor
 import org.maplibre.android.style.layers.PropertyFactory.textField
+import org.maplibre.android.style.layers.PropertyFactory.textMaxWidth
 import org.maplibre.android.style.layers.PropertyFactory.textFont
 import org.maplibre.android.style.layers.PropertyFactory.textHaloColor
 import org.maplibre.android.style.layers.PropertyFactory.textHaloWidth
@@ -62,6 +63,7 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
 import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
+import java.net.URI
 import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -84,6 +86,9 @@ class MapLayers(private val style: Style) {
         style.addImage(ICON_PLANE, planeBitmap(), true)
         style.addImage(ICON_HELI, heliBitmap(), true)
 
+        // Bundled OurAirports data (public domain), loaded natively from the APK.
+        style.addSource(GeoJsonSource(SRC_APT, URI("asset://airports.geojson")))
+        addAirportLayers()
         style.addSource(trailSource)
         style.addSource(routeSource)
         style.addSource(airportSource)
@@ -258,6 +263,65 @@ class MapLayers(private val style: Style) {
         trailSource.setGeoJson(FeatureCollection.fromFeatures(features))
     }
 
+    /**
+     * Airports in view: large from zoom 4, medium from 7, small airfields from 9. Military fields
+     * in green. Codes are shown first, full names when zoomed right in.
+     */
+    private fun addAirportLayers() {
+        val rank = Expression.toNumber(get("rank"))
+        style.addLayer(
+            CircleLayer(LAYER_APT, SRC_APT).withProperties(
+                circleRadius(
+                    Expression.interpolate(
+                        Expression.linear(), Expression.zoom(),
+                        Expression.stop(4, Expression.product(rank, literal(1.6f))),
+                        Expression.stop(11, Expression.sum(literal(3f), Expression.product(rank, literal(2.2f)))),
+                    ),
+                ),
+                circleColor(
+                    Expression.switchCase(
+                        eq(get("mil"), literal(true)), Expression.color(Color.parseColor("#558B2F")),
+                        Expression.color(Color.parseColor("#3949AB")),
+                    ),
+                ),
+                circleStrokeColor("#FFFFFF"),
+                circleStrokeWidth(1.5f),
+            ).withFilter(
+                // Show by importance as you zoom in.
+                Expression.any(
+                    Expression.all(eq(get("rank"), literal(3)), Expression.gte(Expression.zoom(), literal(4))),
+                    Expression.all(eq(get("rank"), literal(2)), Expression.gte(Expression.zoom(), literal(7))),
+                    Expression.gte(Expression.zoom(), literal(9)),
+                ),
+            ),
+        )
+        style.addLayer(
+            SymbolLayer(LAYER_APT_LABEL, SRC_APT).withProperties(
+                textField(
+                    Expression.step(
+                        Expression.zoom(), get("code"),
+                        Expression.stop(11, Expression.concat(get("code"), literal("\n"), get("name"))),
+                    ),
+                ),
+                textFont(FONT),
+                textSize(11f),
+                textOffset(arrayOf(0f, 0.9f)),
+                textAnchor(Property.TEXT_ANCHOR_TOP),
+                textColor("#E8EAF6"),
+                textHaloColor("#CC1A237E"),
+                textHaloWidth(1.5f),
+                textOptional(true),
+                textMaxWidth(8f),
+            ).withFilter(
+                Expression.any(
+                    Expression.all(eq(get("rank"), literal(3)), Expression.gte(Expression.zoom(), literal(5))),
+                    Expression.all(eq(get("rank"), literal(2)), Expression.gte(Expression.zoom(), literal(8))),
+                    Expression.gte(Expression.zoom(), literal(10)),
+                ),
+            ),
+        )
+    }
+
     /** Registers the logo card with the style the first time it's needed. */
     private fun ensureLogo(iata: String): Boolean {
         if (iata in logoImages) return true
@@ -350,6 +414,9 @@ class MapLayers(private val style: Style) {
         private const val LAYER_METAR_LABEL = "sw-metar-label"
         private const val LAYER_TRAIL = "sw-trail"
         private const val LAYER_RADAR = "sw-radar"
+        const val LAYER_APT = "sw-apt"
+        private const val LAYER_APT_LABEL = "sw-apt-label"
+        private const val SRC_APT = "sw-apt"
         private const val LAYER_LOGOS = "sw-logos"
         private const val LAYER_ROUTE = "sw-route"
         private const val LAYER_AIRPORTS = "sw-airports"

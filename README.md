@@ -8,6 +8,9 @@ An open-source Android flight tracker built only on free, public data. Military 
   and on map labels. Looked up in the background (nearest aircraft first) and cached.
 - **Airline logos** above aircraft on the map (zoom 8+), fetched at runtime from pics.avs.io by IATA airline
   code and cached for the session. Can be turned off in Settings.
+- **Airports on the map** from bundled OurAirports data (~11,600 airports): large from zoom 4, medium from 7,
+  small coded airfields from 9; military fields in green. Tap one for its METAR and a live mini-board of
+  arriving / departed flights and aircraft on the ground, built from tracked aircraft and their routes.
 - **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
   never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking. Aircraft are shown with heading and colour:
   amber = civil, green = military, red = emergency squawk (7500/7600/7700), grey = on ground.
@@ -38,6 +41,7 @@ An open-source Android flight tracker built only on free, public data. Military 
 | Routes, aircraft registry | [adsbdb.com](https://www.adsbdb.com) | free |
 | Photos | [Planespotters.net](https://www.planespotters.net/photo/api) | attribution + descriptive User-Agent required |
 | Airline logos | pics.avs.io (Aviasales image CDN, fetched at runtime) | undocumented; logos are the airlines' trademarks |
+| Airports | [OurAirports](https://ourairports.com/data/) (bundled, `tools/build_airports.py`) | public domain |
 | METAR | [aviationweather.gov](https://aviationweather.gov/data/api/) | US gov, free |
 | Radar | [RainViewer](https://www.rainviewer.com/api.html) | free tier, zoom ≤ 7 |
 | Base map | [OpenFreeMap](https://openfreemap.org) + OpenStreetMap | free |

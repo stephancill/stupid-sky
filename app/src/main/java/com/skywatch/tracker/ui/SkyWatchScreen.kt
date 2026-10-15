@@ -95,6 +95,7 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             onViewport = vm::onViewportChanged,
             onAircraftTap = vm::select,
             onMetarTap = vm::selectMetar,
+            onAirportTap = vm::selectAirport,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -174,6 +175,15 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
                         }
                         showWatchDialog = true
                     },
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+                )
+                state.selectedAirport != null -> AirportPanel(
+                    airport = state.selectedAirport!!,
+                    metar = state.airportMetar,
+                    aircraft = state.aircraft,
+                    routes = state.routes,
+                    onPick = vm::selectAndFocus,
+                    onClose = { vm.selectAirport(null) },
                     modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
                 )
                 metar != null -> MetarPanel(metar, onClose = { vm.selectMetar(null) }, modifier = Modifier.fillMaxWidth())

@@ -35,6 +35,9 @@ about $0.07 per build) produced a new URL per build. Fixed asset names make
 `releases/latest/download/stupid-sky-arm64.apk` a permanent link.
 **Watch out:** CI signs with the runner's debug key, so APKs built locally can't be installed over CI builds
 (uninstall first). There's no release signing key yet.
+Agents *can* start the workflow: `POST /repos/stephancill/stupid-sky/actions/workflows/release.yml/dispatches`
+with `{"ref":"main","inputs":{"tag":"vX.Y.Z"}}` (returns 204), then poll `/actions/runs`. This is how v0.1.0
+was published (the run took about 5 minutes).
 
 ### 2026-10-15 — Package renamed to `net.stupidtech.sky`; no backwards compatibility
 **Context:** Rebrand from "SkyWatch" to "stupid sky".

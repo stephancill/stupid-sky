@@ -228,6 +228,16 @@ object FlightData {
         }
     }
 
+    suspend fun fetchBytes(url: String): ByteArray = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(url).build()
+        Throttle.acquire(request.url.host)
+        http.newCall(request).await().use { resp ->
+            if (resp.code == 404) throw NotFoundException(request.url.host)
+            if (!resp.isSuccessful) throw IOException("HTTP ${resp.code} from ${request.url.host}")
+            resp.body?.bytes() ?: throw IOException("Empty response from ${request.url.host}")
+        }
+    }
+
     /** Serialises requests per host and keeps a minimum gap between them. */
     private object Throttle {
         private val locks = ConcurrentHashMap<String, Mutex>()
@@ -238,6 +248,7 @@ object FlightData {
             host.endsWith("adsb.lol") -> 1_000
             host.endsWith("adsbdb.com") -> 500
             host.endsWith("planespotters.net") -> 500
+            host.endsWith("avs.io") -> 150
             else -> 250
         }
 

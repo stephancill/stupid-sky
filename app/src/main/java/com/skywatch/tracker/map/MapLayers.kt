@@ -10,6 +10,7 @@ import com.skywatch.tracker.data.Airport
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.RouteInfo
 import com.skywatch.tracker.data.LatLon
+import com.skywatch.tracker.data.Logos
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.expressions.Expression.eq
 import org.maplibre.android.style.expressions.Expression.get
@@ -22,6 +23,9 @@ import org.maplibre.android.style.layers.PropertyFactory.circleRadius
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
 import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
 import org.maplibre.android.style.layers.PropertyFactory.iconAllowOverlap
+import org.maplibre.android.style.layers.PropertyFactory.iconAnchor
+import org.maplibre.android.style.layers.PropertyFactory.iconOffset
+import org.maplibre.android.style.layers.PropertyFactory.iconOptional
 import org.maplibre.android.style.layers.PropertyFactory.iconColor
 import org.maplibre.android.style.layers.PropertyFactory.iconHaloBlur
 import org.maplibre.android.style.layers.PropertyFactory.iconHaloColor
@@ -74,6 +78,7 @@ class MapLayers(private val style: Style) {
     private val routeSource = GeoJsonSource(SRC_ROUTE)
     private val airportSource = GeoJsonSource(SRC_AIRPORTS)
     private var radarUrl: String? = null
+    private val logoImages = HashSet<String>()
 
     init {
         style.addImage(ICON_PLANE, planeBitmap(), true)
@@ -190,6 +195,18 @@ class MapLayers(private val style: Style) {
                 iconHaloBlur(0.5f),
             ),
         )
+        // Airline logo card above the aircraft, only for features that have a loaded logo.
+        style.addLayer(
+            SymbolLayer(LAYER_LOGOS, SRC_AIRCRAFT).withProperties(
+                iconImage(get("logo")),
+                iconAnchor(Property.ICON_ANCHOR_BOTTOM),
+                iconOffset(arrayOf(0f, -50f)),
+                iconSize(0.42f),
+                iconAllowOverlap(false),
+                iconIgnorePlacement(false),
+                iconOptional(false),
+            ).withFilter(Expression.has("logo")).also { it.minZoom = 8f },
+        )
         style.addLayer(
             SymbolLayer(LAYER_AIRCRAFT_LABEL, SRC_AIRCRAFT).withProperties(
                 textField(get("label")),
@@ -206,13 +223,20 @@ class MapLayers(private val style: Style) {
         )
     }
 
-    fun setAircraft(list: List<Aircraft>, selectedHex: String?, routes: Map<String, RouteInfo>) {
+    fun setAircraft(
+        list: List<Aircraft>,
+        selectedHex: String?,
+        routes: Map<String, RouteInfo>,
+        showLogos: Boolean,
+    ) {
         val features = list.map { a ->
             Feature.fromGeometry(Point.fromLngLat(a.lon!!, a.lat!!)).apply {
                 addStringProperty("hex", a.hex)
                 val r = a.callsign?.let { routes[it] }
                 val routeText = if (r?.hasRoute == true) "\n${r.origin!!.code}→${r.destination!!.code}" else ""
                 addStringProperty("label", a.label + routeText)
+                val iata = r?.airlineIata
+                if (showLogos && iata != null && ensureLogo(iata)) addStringProperty("logo", "logo-$iata")
                 addStringProperty("icon", if (a.category == "A7") ICON_HELI else ICON_PLANE)
                 addNumberProperty("track", a.track ?: a.trueHeading ?: 0.0)
                 addBooleanProperty("mil", a.isMilitary)
@@ -232,6 +256,15 @@ class MapLayers(private val style: Style) {
             ).apply { addNumberProperty("alt", b.alt ?: 0) }
         }
         trailSource.setGeoJson(FeatureCollection.fromFeatures(features))
+    }
+
+    /** Registers the logo card with the style the first time it's needed. */
+    private fun ensureLogo(iata: String): Boolean {
+        if (iata in logoImages) return true
+        val bmp = Logos.card(iata) ?: return false
+        style.addImage("logo-$iata", bmp)
+        logoImages += iata
+        return true
     }
 
     /** Dashed line to the destination plus origin/destination markers; nulls clear it. */
@@ -317,6 +350,7 @@ class MapLayers(private val style: Style) {
         private const val LAYER_METAR_LABEL = "sw-metar-label"
         private const val LAYER_TRAIL = "sw-trail"
         private const val LAYER_RADAR = "sw-radar"
+        private const val LAYER_LOGOS = "sw-logos"
         private const val LAYER_ROUTE = "sw-route"
         private const val LAYER_AIRPORTS = "sw-airports"
         private const val LAYER_AIRPORT_LABELS = "sw-airport-labels"

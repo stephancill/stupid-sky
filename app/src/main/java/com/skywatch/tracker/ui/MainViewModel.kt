@@ -10,6 +10,7 @@ import com.skywatch.tracker.data.OpenSky
 import com.skywatch.tracker.data.Enrichment
 import com.skywatch.tracker.data.FlightData
 import com.skywatch.tracker.data.LatLon
+import com.skywatch.tracker.data.Logos
 import com.skywatch.tracker.data.Trace
 import com.skywatch.tracker.data.Metar
 import com.skywatch.tracker.data.RateLimitedException
@@ -66,6 +67,9 @@ data class UiState(
     val failedSources: List<String> = emptyList(),
     /** Airline and origin/destination by callsign, filled in progressively in the background. */
     val routes: Map<String, RouteInfo> = emptyMap(),
+    /** IATA codes whose logo card is loaded (bitmaps live in [Logos]). */
+    val logos: Set<String> = emptySet(),
+    val showLogos: Boolean = true,
 )
 
 @OptIn(FlowPreview::class)
@@ -76,6 +80,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<UiState> = _state
 
     val watchlist = settings.watchlist.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val logosEnabled = settings.logosEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val openSkyEnabled = settings.openSkyEnabled.stateIn(viewModelScope, SharingStarted.Eagerly, true)
     val openSkyCredentials = settings.openSkyCredentials.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
@@ -105,6 +110,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var openSkyJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            logosEnabled.collect { on ->
+                _state.update { it.copy(showLogos = on) }
+                if (on) loadLogos()
+            }
+        }
         viewModelScope.launch {
             combine(openSkyEnabled, openSkyCredentials) { on, c -> on to c }.collect {
                 openSkyCredits = null
@@ -243,9 +254,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // Nothing resolved (offline / rate limited): stop and try again after the next refresh.
                 if (found.isEmpty()) break
                 _state.update { it.copy(routes = it.routes + found) }
+                loadLogos()
             }
         }
     }
+
+    private var logoJob: Job? = null
+
+    /** Download logos for airlines in view, nearest aircraft first, one card per airline. */
+    private fun loadLogos() {
+        if (!logosEnabled.value || logoJob?.isActive == true) return
+        logoJob = viewModelScope.launch {
+            while (true) {
+                val s = _state.value
+                val centre = s.viewport ?: loadedArea
+                val next = s.aircraft
+                    .sortedBy { a -> centre?.let { c -> (a.lat!! - c.lat).let { it * it } + (a.lon!! - c.lon).let { it * it } } ?: 0.0 }
+                    .mapNotNull { a -> a.callsign?.let { s.routes[it]?.airlineIata } }
+                    .distinct()
+                    .firstOrNull { !Logos.isKnown(it) }
+                    ?: break
+                if (Logos.load(next)) {
+                    _state.update { it.copy(logos = it.logos + next) }
+                } else if (!Logos.isKnown(next)) {
+                    break // network trouble: retry after the next refresh
+                }
+            }
+        }
+    }
+
+    fun setLogosEnabled(on: Boolean) = viewModelScope.launch { settings.setLogosEnabled(on) }
 
     private fun restartPolling(immediate: Boolean = false) {
         pollJob?.cancel()

@@ -37,6 +37,11 @@ private val Context.store by preferencesDataStore("skywatch")
 class Settings(private val context: Context) {
     private val watchKey = stringSetPreferencesKey("watchlist")
     private val openSkyOnKey = booleanPreferencesKey("opensky_on")
+    private val logosKey = booleanPreferencesKey("logos_on")
+
+    val logosEnabled: Flow<Boolean> = context.store.data.map { it[logosKey] ?: true }
+
+    suspend fun setLogosEnabled(on: Boolean) = context.store.edit { it[logosKey] = on }
     private val openSkyIdKey = stringPreferencesKey("opensky_id")
     private val openSkySecretKey = stringPreferencesKey("opensky_secret")
 

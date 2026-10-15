@@ -6,6 +6,8 @@ An open-source Android flight tracker built only on free, public data. Military 
 - **Metric units**: altitude in metres, speed in km/h, climb rate in m/s, distance in km.
 - **Airline and origin → destination** for every flight with a known callsign, shown in the list, the detail panel
   and on map labels. Looked up in the background (nearest aircraft first) and cached.
+- **Airline logos** above aircraft on the map (zoom 8+), fetched at runtime from pics.avs.io by IATA airline
+  code and cached for the session. Can be turned off in Settings.
 - **Live map** of every aircraft in the loaded area (up to 250 nm), refreshed every 10 s. Panning or zooming
   never triggers a request; tap **Refresh this area** (or the refresh button) to load where you're looking. Aircraft are shown with heading and colour:
   amber = civil, green = military, red = emergency squawk (7500/7600/7700), grey = on ground.
@@ -35,6 +37,7 @@ An open-source Android flight tracker built only on free, public data. Military 
 | Gap-fill positions | [OpenSky Network](https://openskynetwork.github.io/opensky-api/rest.html) | free, non-commercial, daily credit limit |
 | Routes, aircraft registry | [adsbdb.com](https://www.adsbdb.com) | free |
 | Photos | [Planespotters.net](https://www.planespotters.net/photo/api) | attribution + descriptive User-Agent required |
+| Airline logos | pics.avs.io (Aviasales image CDN, fetched at runtime) | undocumented; logos are the airlines' trademarks |
 | METAR | [aviationweather.gov](https://aviationweather.gov/data/api/) | US gov, free |
 | Radar | [RainViewer](https://www.rainviewer.com/api.html) | free tier, zoom ≤ 7 |
 | Base map | [OpenFreeMap](https://openfreemap.org) + OpenStreetMap | free |

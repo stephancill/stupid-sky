@@ -167,6 +167,8 @@ fun SkyWatchScreen(vm: MainViewModel, requestNotifications: () -> Unit, requestL
             SettingsContent(
                 hideGround = state.hideGround,
                 onHideGround = vm::setHideGround,
+                showLogos = state.showLogos,
+                onShowLogos = vm::setLogosEnabled,
                 openSkyOn = openSkyOn,
                 onOpenSky = vm::setOpenSkyEnabled,
                 openSkyHasAccount = openSkyCreds != null,
@@ -258,6 +260,8 @@ private fun StatusPill(state: UiState, modifier: Modifier) {
 private fun SettingsContent(
     hideGround: Boolean,
     onHideGround: (Boolean) -> Unit,
+    showLogos: Boolean,
+    onShowLogos: (Boolean) -> Unit,
     openSkyOn: Boolean,
     onOpenSky: (Boolean) -> Unit,
     openSkyHasAccount: Boolean,
@@ -279,6 +283,10 @@ private fun SettingsContent(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Hide aircraft on the ground", Modifier.weight(1f))
             Switch(checked = hideGround, onCheckedChange = onHideGround)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Show airline logos on the map", Modifier.weight(1f))
+            Switch(checked = showLogos, onCheckedChange = onShowLogos)
         }
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         OpenSkySection(
@@ -314,7 +322,7 @@ private fun SettingsContent(
         HorizontalDivider(Modifier.padding(vertical = 12.dp))
         Text(
             "Positions: adsb.lol (ODbL) / adsb.fi open data / The OpenSky Network (opensky-network.org) · Routes & aircraft: adsbdb.com · " +
-                "Photos: Planespotters.net · Weather: NOAA aviationweather.gov, RainViewer · " +
+                "Photos: Planespotters.net · Airline logos: pics.avs.io · Weather: NOAA aviationweather.gov, RainViewer · " +
                 "Map: OpenFreeMap, © OpenStreetMap contributors",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

@@ -124,8 +124,8 @@ fun MapHost(
 
     val l = layers
     if (l != null) {
-        LaunchedEffect(l, state.aircraft, state.selected?.hex, state.routes) {
-            l.setAircraft(state.aircraft, state.selected?.hex, state.routes)
+        LaunchedEffect(l, state.aircraft, state.selected?.hex, state.routes, state.logos, state.showLogos) {
+            l.setAircraft(state.aircraft, state.selected?.hex, state.routes, state.showLogos)
         }
         LaunchedEffect(l, state.selectedTrail) { l.setTrail(state.selectedTrail) }
         // Remaining route for the selected aircraft (only while airborne).

@@ -10,6 +10,8 @@ data class RouteInfo(val route: FlightRoute?, val airline: Airline?) {
     val destination: Airport? get() = route?.destination
     val airlineName: String? get() = airline?.name ?: route?.airline?.name
     val hasRoute: Boolean get() = origin != null && destination != null
+    /** 2-letter IATA airline code, used for the logo. */
+    val airlineIata: String? get() = (airline?.iata ?: route?.airline?.iata)?.takeIf { it.length == 2 }
 }
 
 /**

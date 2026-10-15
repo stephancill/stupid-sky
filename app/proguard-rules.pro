@@ -1,5 +1,5 @@
 -keepattributes *Annotation*, InnerClasses
--keep,includedescriptorclasses class com.skywatch.tracker.**$$serializer { *; }
--keepclassmembers class com.skywatch.tracker.** { *** Companion; }
--keepclasseswithmembers class com.skywatch.tracker.** { kotlinx.serialization.KSerializer serializer(...); }
+-keep,includedescriptorclasses class net.stupidtech.sky.**$$serializer { *; }
+-keepclassmembers class net.stupidtech.sky.** { *** Companion; }
+-keepclasseswithmembers class net.stupidtech.sky.** { kotlinx.serialization.KSerializer serializer(...); }
 -dontwarn org.maplibre.**

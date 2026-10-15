@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.skywatch.tracker"
+    namespace = "net.stupidtech.sky"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.skywatch.tracker"
+        applicationId = "net.stupidtech.sky"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

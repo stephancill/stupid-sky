@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Builds the stupid sky app icon from the 24x24 loop icon (tools/loop-icon.svg).
+Builds the stupid sky app icon (black mark on white) from the 24x24 loop icon (tools/loop-icon.svg).
 
 Android VectorDrawables can't do dash arrays or masks, so the geometry is computed here:
 the first half of the curve is cut out exactly (de Casteljau split), the dots of the second
@@ -134,7 +134,7 @@ def vector(size, viewport, scale, ox, oy, color, extra=""):
 FG_SCALE = 2.4
 FG_OFF = (108 - 24 * FG_SCALE) / 2
 with open(os.path.join(RES, "drawable", "ic_launcher_foreground.xml"), "w") as fh:
-    fh.write(vector(108, 108, FG_SCALE, FG_OFF, FG_OFF, "#FFFFFFFF"))
+    fh.write(vector(108, 108, FG_SCALE, FG_OFF, FG_OFF, "#FF000000"))
 # Themed (monochrome) icon for Android 13+: same mark, the system tints it.
 with open(os.path.join(RES, "drawable", "ic_launcher_monochrome.xml"), "w") as fh:
     fh.write(vector(108, 108, FG_SCALE, FG_OFF, FG_OFF, "#FFFFFFFF"))
@@ -144,8 +144,8 @@ with open(os.path.join(RES, "drawable", "ic_stat_logo.xml"), "w") as fh:
 
 # Preview: the launcher icon as Android masks it (circle and squircle), plus the notification icon.
 curve, circles, w = geometry(FG_SCALE, FG_OFF, FG_OFF)
-bg = '<defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4FA3FF"/><stop offset="1" stop-color="#1E6FE0"/></linearGradient></defs>'
-mark = f'<path d="{curve}" fill="none" stroke="#fff" stroke-width="{f(w)}" stroke-linecap="round" stroke-linejoin="round"/><path d="{circles}" fill="#fff"/>'
+bg = ''
+mark = f'<path d="{curve}" fill="none" stroke="#000" stroke-width="{f(w)}" stroke-linecap="round" stroke-linejoin="round"/><path d="{circles}" fill="#000"/>'
 open(os.path.join(ROOT, "tools", "icon-preview.svg"), "w").write(
-    f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">{bg}<rect width="108" height="108" fill="url(#sky)"/>{mark}</svg>\n')
+    f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108">{bg}<rect width="108" height="108" fill="#fff"/>{mark}</svg>\n')
 print(f"path length {total:.2f}; centre {centre[0]:.2f},{centre[1]:.2f}; {len(dots)} dots")

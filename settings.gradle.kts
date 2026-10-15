@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "SkyWatch"
+rootProject.name = "stupid-sky"
 include(":app")

@@ -1,14 +1,9 @@
 package com.skywatch.tracker.ui
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -64,35 +59,13 @@ fun AircraftPanel(
     val photo = enrichment?.photo
     val airline = route?.airline?.name ?: routeInfo?.airlineName ?: info?.owner
 
-    // Swipe the header down to collapse, up to expand; tap toggles.
-    val dragToggle = Modifier.pointerInput(collapsed) {
-        var total = 0f
-        detectVerticalDragGestures(
-            onDragStart = { total = 0f },
-            onVerticalDrag = { change, dy -> change.consume(); total += dy },
-            onDragEnd = {
-                if (total > 40f && !collapsed) onCollapsedChange(true)
-                if (total < -40f && collapsed) onCollapsedChange(false)
-            },
-        )
-    }
-
     Card(modifier.animateContentSize(), shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)) {
-        Box(
-            Modifier.fillMaxWidth().then(dragToggle).clickable { onCollapsedChange(!collapsed) }.padding(top = 8.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier.size(width = 36.dp, height = 4.dp)
-                    .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f), RoundedCornerShape(2.dp)),
-            )
-        }
         if (collapsed) {
-            CollapsedHeader(ac, airline, route, onExpand = { onCollapsedChange(false) }, onClose = onClose, modifier = dragToggle)
+            CollapsedHeader(ac, airline, route, onExpand = { onCollapsedChange(false) }, onClose = onClose)
             return@Card
         }
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = dragToggle) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(ac.label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     if (airline != null) Text(airline, style = MaterialTheme.typography.bodyMedium)
@@ -183,10 +156,9 @@ private fun CollapsedHeader(
     route: com.skywatch.tracker.data.FlightRoute?,
     onExpand: () -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier,
 ) {
     Row(
-        modifier.fillMaxWidth().clickable(onClick = onExpand).padding(start = 16.dp, end = 4.dp, bottom = 8.dp),
+        Modifier.fillMaxWidth().clickable(onClick = onExpand).padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
